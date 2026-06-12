@@ -375,7 +375,7 @@ phase_chroot() {
                dm_pkg="gui-apps/greetd gui-apps/greetd-tuigreet"; dm_service="greetd" ;;
     esac
 
-    cat > "$MOUNT_ROOT/setup-chroot.sh" <<CHROOT_SCRIPT
+    cat > "$MOUNT_ROOT/setup-chroot.sh" <<'CHROOT_SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -532,7 +532,26 @@ CHROOT_SCRIPT
     chmod +x "$MOUNT_ROOT/setup-chroot.sh"
 
     info "Entering chroot..."
-    chroot "$MOUNT_ROOT" /bin/bash /setup-chroot.sh
+    env -i \
+        HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        INIT_SYSTEM="$INIT_SYSTEM" \
+        TIMEZONE="$TIMEZONE" \
+        LOCALE="$LOCALE" \
+        KERNEL_METHOD="$KERNEL_METHOD" \
+        HOSTNAME="$HOSTNAME" \
+        ROOT_PASSWORD="$ROOT_PASSWORD" \
+        FIRMWARE="$FIRMWARE" \
+        FS_TYPE="$FS_TYPE" \
+        DISK="$DISK" \
+        DESKTOP="$DESKTOP" \
+        root_uuid="$root_uuid" \
+        swap_uuid="$swap_uuid" \
+        fstab_efi="$fstab_efi" \
+        grub_target="$grub_target" \
+        desktop_pkgs="$desktop_pkgs" \
+        dm_pkg="$dm_pkg" \
+        dm_service="$dm_service" \
+        chroot "$MOUNT_ROOT" /bin/bash /setup-chroot.sh
 
     rm -f "$MOUNT_ROOT/setup-chroot.sh"
     success "Chroot setup complete."
