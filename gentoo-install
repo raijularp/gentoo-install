@@ -62,10 +62,22 @@ collect_config() {
 
     # ── Filesystem ──
     echo
-    prompt "Root filesystem [ext4/btrfs/xfs] (default: ext4): "
+    echo "  ext4 — solid, well-tested default"
+    echo "  btrfs — copy-on-write, snapshots, checksums"
+    echo "  xfs  — high performance, good for large files"
+    echo "  zfs  — advanced CoW, snapshots, built-in RAID, compression (advanced)"
+    echo
+    prompt "Root filesystem [ext4/btrfs/xfs/zfs] (default: ext4): "
     read -r FS_TYPE
     FS_TYPE="${FS_TYPE:-ext4}"
-    [[ "$FS_TYPE" =~ ^(ext4|btrfs|xfs)$ ]] || die "Unsupported filesystem: $FS_TYPE"
+    [[ "$FS_TYPE" =~ ^(ext4|btrfs|xfs|zfs)$ ]] || die "Unsupported filesystem: $FS_TYPE"
+    if [[ "$FS_TYPE" == "zfs" ]]; then
+        warn "ZFS root requires a separate /boot partition and ZFS kernel modules in the initramfs."
+        warn "genkernel will be used regardless of your kernel choice to build ZFS support in."
+        prompt "Are you sure? [y/N]: "
+        read -r ZFS_CONFIRM
+        [[ "$ZFS_CONFIRM" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+    fi
 
     # ── Init system ──
     echo
@@ -197,7 +209,30 @@ phase_disk() {
 
     parted -s "$DISK" mklabel gpt
 
-    if [[ "$SYS_FIRMWARE" == "uefi" ]]; then
+    # ZFS needs a dedicated /boot partition since GRUB ZFS support is unreliable
+    if [[ "$FS_TYPE" == "zfs" ]]; then
+        if [[ "$SYS_FIRMWARE" == "uefi" ]]; then
+            parted -s "$DISK" mkpart ESP fat32 1MiB 513MiB
+            parted -s "$DISK" set 1 esp on
+            parted -s "$DISK" mkpart boot ext4 513MiB 1537MiB
+            parted -s "$DISK" mkpart swap linux-swap 1537MiB 5633MiB
+            parted -s "$DISK" mkpart root zfs 5633MiB 100%
+            PART_EFI="${PART_PREFIX}1"
+            PART_BOOT="${PART_PREFIX}2"
+            PART_SWAP="${PART_PREFIX}3"
+            PART_ROOT="${PART_PREFIX}4"
+        else
+            parted -s "$DISK" mkpart bios_grub 1MiB 3MiB
+            parted -s "$DISK" set 1 bios_grub on
+            parted -s "$DISK" mkpart boot ext4 3MiB 1027MiB
+            parted -s "$DISK" mkpart swap linux-swap 1027MiB 5123MiB
+            parted -s "$DISK" mkpart root zfs 5123MiB 100%
+            PART_EFI=""
+            PART_BOOT="${PART_PREFIX}2"
+            PART_SWAP="${PART_PREFIX}3"
+            PART_ROOT="${PART_PREFIX}4"
+        fi
+    elif [[ "$SYS_FIRMWARE" == "uefi" ]]; then
         parted -s "$DISK" mkpart ESP fat32 1MiB 513MiB
         parted -s "$DISK" set 1 esp on
         parted -s "$DISK" mkpart swap linux-swap 513MiB 4609MiB
@@ -205,6 +240,7 @@ phase_disk() {
         PART_EFI="${PART_PREFIX}1"
         PART_SWAP="${PART_PREFIX}2"
         PART_ROOT="${PART_PREFIX}3"
+        PART_BOOT=""
     else
         parted -s "$DISK" mkpart bios_grub 1MiB 3MiB
         parted -s "$DISK" set 1 bios_grub on
@@ -213,13 +249,13 @@ phase_disk() {
         PART_SWAP="${PART_PREFIX}2"
         PART_ROOT="${PART_PREFIX}3"
         PART_EFI=""
+        PART_BOOT=""
     fi
 
     info "Formatting partitions..."
 
-    if [[ "$SYS_FIRMWARE" == "uefi" ]]; then
-        mkfs.vfat -F32 "$PART_EFI"
-    fi
+    [[ -n "$PART_EFI" ]] && mkfs.vfat -F32 "$PART_EFI"
+    [[ -n "$PART_BOOT" ]] && mkfs.ext4 -F -L boot "$PART_BOOT"
 
     mkswap "$PART_SWAP"
     swapon "$PART_SWAP"
@@ -228,13 +264,44 @@ phase_disk() {
         ext4)  mkfs.ext4  -F -L root "$PART_ROOT" ;;
         btrfs) mkfs.btrfs -f -L root "$PART_ROOT" ;;
         xfs)   mkfs.xfs   -f -L root "$PART_ROOT" ;;
+        zfs)
+            # Destroy any existing pool on this partition
+            zpool destroy rpool 2>/dev/null || true
+            zpool create -f \
+                -o ashift=12 \
+                -O acltype=posixacl \
+                -O compression=lz4 \
+                -O dnodesize=auto \
+                -O normalization=formD \
+                -O relatime=on \
+                -O xattr=sa \
+                -O mountpoint=none \
+                rpool "$PART_ROOT"
+            zfs create -o mountpoint=/ rpool/root
+            zfs create -o mountpoint=/home rpool/home
+            zfs create -o mountpoint=/var/log rpool/log
+            zpool export rpool
+            ;;
     esac
 
     info "Mounting filesystems..."
     mkdir -p "$MOUNT_ROOT"
-    mount "$PART_ROOT" "$MOUNT_ROOT"
 
-    if [[ "$SYS_FIRMWARE" == "uefi" ]]; then
+    if [[ "$FS_TYPE" == "zfs" ]]; then
+        zpool import -d "/dev/disk/by-id" -R "$MOUNT_ROOT" rpool
+        zfs mount rpool/root
+        zfs mount rpool/home
+        zfs mount rpool/log
+    else
+        mount "$PART_ROOT" "$MOUNT_ROOT"
+    fi
+
+    if [[ -n "$PART_BOOT" ]]; then
+        mkdir -p "$MOUNT_ROOT/boot"
+        mount "$PART_BOOT" "$MOUNT_ROOT/boot"
+    fi
+
+    if [[ -n "$PART_EFI" ]]; then
         mkdir -p "$MOUNT_ROOT/boot/efi"
         mount "$PART_EFI" "$MOUNT_ROOT/boot/efi"
     fi
@@ -360,14 +427,20 @@ phase_chroot() {
     info "Writing in-chroot setup script..."
 
     # Determine fstab entries
-    local fstab_efi=""
-    if [[ "$SYS_FIRMWARE" == "uefi" ]]; then
+    local fstab_efi="" fstab_boot="" root_uuid=""
+    if [[ "$SYS_FIRMWARE" == "uefi" && -n "$PART_EFI" ]]; then
         local efi_uuid
         efi_uuid=$(blkid -s UUID -o value "$PART_EFI")
         fstab_efi="UUID=${efi_uuid}  /boot/efi  vfat  defaults  0 2"
     fi
-    local root_uuid
-    root_uuid=$(blkid -s UUID -o value "$PART_ROOT")
+    if [[ -n "$PART_BOOT" ]]; then
+        local boot_uuid
+        boot_uuid=$(blkid -s UUID -o value "$PART_BOOT")
+        fstab_boot="UUID=${boot_uuid}  /boot  ext4  defaults,noatime  0 2"
+    fi
+    if [[ "$FS_TYPE" != "zfs" ]]; then
+        root_uuid=$(blkid -s UUID -o value "$PART_ROOT")
+    fi
     local swap_uuid
     swap_uuid=$(blkid -s UUID -o value "$PART_SWAP")
 
@@ -441,22 +514,60 @@ emerge -q sys-kernel/gentoo-sources sys-kernel/linux-firmware
 # Make sure /usr/src/linux symlink exists before genkernel runs
 eselect kernel set 1
 
-if [[ "${KERNEL_METHOD}" == "genkernel" ]]; then
+if [[ "${FS_TYPE}" == "zfs" ]]; then
+    echo "[chroot] Installing ZFS..."
+    emerge -q sys-fs/zfs sys-fs/zfs-kmod
+    # Generate a hostid required by ZFS
+    zgenhostid
+    # Enable ZFS services
+    case "${INIT_SYSTEM}" in
+        openrc)
+            rc-update add zfs-import boot
+            rc-update add zfs-mount boot
+            rc-update add zfs-share default
+            ;;
+        systemd)
+            systemctl enable zfs-import-cache zfs-import.target zfs-mount zfs-share zfs.target
+            ;;
+        runit)
+            for svc in zfs-import zfs-mount; do
+                ln -sf /etc/sv/${svc} /etc/runit/runsvdir/default/${svc}
+            done
+            ;;
+    esac
+fi
+
+if [[ "${KERNEL_METHOD}" == "genkernel" || "${FS_TYPE}" == "zfs" ]]; then
     emerge -q sys-kernel/genkernel
-    genkernel all
-else
+    if [[ "${FS_TYPE}" == "zfs" ]]; then
+        genkernel --zfs all
+    else
+        genkernel all
+    fi
+elif [[ "${KERNEL_METHOD}" == "manual" ]]; then
     echo "[chroot] Kernel sources ready at /usr/src/linux"
     echo "[chroot] Run 'make menuconfig && make && make modules_install && make install' manually."
     echo "[chroot] Continuing with the rest of installation..."
 fi
 
 echo "[chroot] Writing fstab..."
-cat > /etc/fstab <<FSTAB
-# <fs>                                  <mp>       <type>   <opts>        <dump> <pass>
-UUID=${root_uuid}  /          ${FS_TYPE}  defaults,noatime  0      1
-UUID=${swap_uuid}  none       swap     sw            0      0
+if [[ "${FS_TYPE}" == "zfs" ]]; then
+    cat > /etc/fstab <<FSTAB
+# <fs>                 <mp>    <type>  <opts>          <dump> <pass>
+# ZFS datasets are managed by ZFS — root is mounted by the initramfs
+UUID=${swap_uuid}  none    swap    sw              0      0
+${fstab_boot}
 ${fstab_efi}
 FSTAB
+else
+    cat > /etc/fstab <<FSTAB
+# <fs>                                  <mp>       <type>      <opts>            <dump> <pass>
+UUID=${root_uuid}  /          ${FS_TYPE}  defaults,noatime  0      1
+UUID=${swap_uuid}  none       swap        sw                0      0
+${fstab_boot}
+${fstab_efi}
+FSTAB
+fi
 
 echo "[chroot] Setting hostname..."
 echo "${HOSTNAME}" > /etc/hostname
@@ -584,6 +695,7 @@ CHROOT_SCRIPT
         root_uuid="$root_uuid" \
         swap_uuid="$swap_uuid" \
         fstab_efi="$fstab_efi" \
+        fstab_boot="$fstab_boot" \
         grub_target="$grub_target" \
         desktop_pkgs="$desktop_pkgs" \
         dm_pkg="$dm_pkg" \
@@ -601,6 +713,10 @@ phase_cleanup() {
     umount -l "$MOUNT_ROOT/sys" 2>/dev/null || true
     umount -l "$MOUNT_ROOT/proc" 2>/dev/null || true
     umount -R "$MOUNT_ROOT" 2>/dev/null || true
+    if [[ "$FS_TYPE" == "zfs" ]]; then
+        zfs unmount -a 2>/dev/null || true
+        zpool export rpool 2>/dev/null || true
+    fi
     swapoff "$PART_SWAP" 2>/dev/null || true
     success "Filesystems unmounted."
 }
