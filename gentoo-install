@@ -201,9 +201,9 @@ phase_disk() {
     swapon "$PART_SWAP"
 
     case "$FS_TYPE" in
-        ext4)  mkfs.ext4  -L root "$PART_ROOT" ;;
-        btrfs) mkfs.btrfs -L root "$PART_ROOT" ;;
-        xfs)   mkfs.xfs   -L root "$PART_ROOT" ;;
+        ext4)  mkfs.ext4  -F -L root "$PART_ROOT" ;;
+        btrfs) mkfs.btrfs -f -L root "$PART_ROOT" ;;
+        xfs)   mkfs.xfs   -f -L root "$PART_ROOT" ;;
     esac
 
     info "Mounting filesystems..."
