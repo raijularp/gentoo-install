@@ -365,7 +365,7 @@ phase_chroot() {
     esac
 
     # WMs use lightdm; Wayland compositors use greetd; big DEs have their own
-    local dm_pkg="" dm_service=""
+    local dm_pkg="" dm_service="" desktop_pkgs=""
     case "$DESKTOP" in
         kde)   dm_pkg="x11-misc/sddm";  dm_service="sddm" ;;
         gnome) dm_pkg="gnome-base/gdm"; dm_service="gdm" ;;
@@ -515,13 +515,15 @@ if [[ -n "${desktop_pkgs}" ]]; then
     fi
 
     emerge -q ${desktop_pkgs} ${dm_pkg}
-    case "${INIT_SYSTEM}" in
-        openrc)  rc-update add ${dm_service} default ;;
-        systemd) systemctl enable ${dm_service} ;;
-        runit)   ln -sf /etc/sv/${dm_service} /etc/runit/runsvdir/default/${dm_service} ;;
-        s6)      ln -sf /etc/s6/adminsv/${dm_service} /etc/s6/adminsv/default/contents.d/${dm_service} ;;
-        dinit)   dinitctl enable ${dm_service} ;;
-    esac
+    if [[ -n "${dm_service}" ]]; then
+        case "${INIT_SYSTEM}" in
+            openrc)  rc-update add ${dm_service} default ;;
+            systemd) systemctl enable ${dm_service} ;;
+            runit)   ln -sf /etc/sv/${dm_service} /etc/runit/runsvdir/default/${dm_service} ;;
+            s6)      ln -sf /etc/s6/adminsv/${dm_service} /etc/s6/adminsv/default/contents.d/${dm_service} ;;
+            dinit)   dinitctl enable ${dm_service} ;;
+        esac
+    fi
 fi
 
 echo "[chroot] Done!"
