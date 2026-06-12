@@ -42,10 +42,10 @@ collect_config() {
 
     # ── Firmware type ──
     if [[ -d /sys/firmware/efi ]]; then
-        FIRMWARE="uefi"
+        SYS_FIRMWARE="uefi"
         success "UEFI firmware detected."
     else
-        FIRMWARE="bios"
+        SYS_FIRMWARE="bios"
         success "BIOS/Legacy firmware detected."
     fi
 
@@ -161,7 +161,7 @@ collect_config() {
     echo
     echo -e "${BOLD}── Installation Summary ──────────────────────${RESET}"
     echo "  Disk:         $DISK"
-    echo "  Firmware:     $FIRMWARE"
+    echo "  Firmware:     $SYS_FIRMWARE"
     echo "  Filesystem:   $FS_TYPE"
     echo "  libc:         $LIBC"
     echo "  Init system:  $INIT_SYSTEM"
@@ -197,7 +197,7 @@ phase_disk() {
 
     parted -s "$DISK" mklabel gpt
 
-    if [[ "$FIRMWARE" == "uefi" ]]; then
+    if [[ "$SYS_FIRMWARE" == "uefi" ]]; then
         parted -s "$DISK" mkpart ESP fat32 1MiB 513MiB
         parted -s "$DISK" set 1 esp on
         parted -s "$DISK" mkpart swap linux-swap 513MiB 4609MiB
@@ -217,7 +217,7 @@ phase_disk() {
 
     info "Formatting partitions..."
 
-    if [[ "$FIRMWARE" == "uefi" ]]; then
+    if [[ "$SYS_FIRMWARE" == "uefi" ]]; then
         mkfs.vfat -F32 "$PART_EFI"
     fi
 
@@ -234,7 +234,7 @@ phase_disk() {
     mkdir -p "$MOUNT_ROOT"
     mount "$PART_ROOT" "$MOUNT_ROOT"
 
-    if [[ "$FIRMWARE" == "uefi" ]]; then
+    if [[ "$SYS_FIRMWARE" == "uefi" ]]; then
         mkdir -p "$MOUNT_ROOT/boot/efi"
         mount "$PART_EFI" "$MOUNT_ROOT/boot/efi"
     fi
@@ -331,7 +331,7 @@ EMERGE_DEFAULT_OPTS="--jobs=${cpu_count} --load-average=${cpu_count}"
 
 USE="${use_flags}"
 
-GRUB_PLATFORMS="${FIRMWARE}"
+GRUB_PLATFORMS="${SYS_FIRMWARE}"
 VIDEO_CARDS="intel amdgpu radeon nouveau"
 INPUT_DEVICES="libinput"
 
@@ -361,7 +361,7 @@ phase_chroot() {
 
     # Determine fstab entries
     local fstab_efi=""
-    if [[ "$FIRMWARE" == "uefi" ]]; then
+    if [[ "$SYS_FIRMWARE" == "uefi" ]]; then
         local efi_uuid
         efi_uuid=$(blkid -s UUID -o value "$PART_EFI")
         fstab_efi="UUID=${efi_uuid}  /boot/efi  vfat  defaults  0 2"
@@ -372,7 +372,7 @@ phase_chroot() {
     swap_uuid=$(blkid -s UUID -o value "$PART_SWAP")
 
     local grub_target
-    [[ "$FIRMWARE" == "uefi" ]] && grub_target="--target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Gentoo" \
+    [[ "$SYS_FIRMWARE" == "uefi" ]] && grub_target="--target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Gentoo" \
                                  || grub_target="--target=i386-pc $DISK"
 
     local WAYLAND_BASE="sys-auth/seatd x11-terms/alacritty gui-apps/waybar gui-apps/wofi"
@@ -437,6 +437,9 @@ source /etc/profile 2>/dev/null || true
 
 echo "[chroot] Installing kernel sources..."
 emerge -q sys-kernel/gentoo-sources sys-kernel/linux-firmware
+
+# Make sure /usr/src/linux symlink exists before genkernel runs
+eselect kernel set 1
 
 if [[ "${KERNEL_METHOD}" == "genkernel" ]]; then
     emerge -q sys-kernel/genkernel
@@ -573,7 +576,7 @@ CHROOT_SCRIPT
         KERNEL_METHOD="$KERNEL_METHOD" \
         HOSTNAME="$HOSTNAME" \
         ROOT_PASSWORD="$ROOT_PASSWORD" \
-        FIRMWARE="$FIRMWARE" \
+        SYS_FIRMWARE="$SYS_FIRMWARE" \
         FS_TYPE="$FS_TYPE" \
         DISK="$DISK" \
         DESKTOP="$DESKTOP" \
