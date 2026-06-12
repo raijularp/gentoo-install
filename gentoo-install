@@ -49,6 +49,16 @@ collect_config() {
         success "BIOS/Legacy firmware detected."
     fi
 
+    # ── libc ──
+    echo
+    echo "  glibc — default, broadest compatibility"
+    echo "  musl  — lightweight, minimal, stricter standards compliance"
+    echo
+    prompt "libc [glibc/musl] (default: glibc): "
+    read -r LIBC
+    LIBC="${LIBC:-glibc}"
+    [[ "$LIBC" =~ ^(glibc|musl)$ ]] || die "Unsupported libc: $LIBC"
+
     # ── Filesystem ──
     echo
     prompt "Root filesystem [ext4/btrfs/xfs] (default: ext4): "
@@ -68,6 +78,9 @@ collect_config() {
     read -r INIT_SYSTEM
     INIT_SYSTEM="${INIT_SYSTEM:-openrc}"
     [[ "$INIT_SYSTEM" =~ ^(openrc|systemd|runit|s6|dinit)$ ]] || die "Unsupported init system: $INIT_SYSTEM"
+    if [[ "$INIT_SYSTEM" == "systemd" && "$LIBC" == "musl" ]]; then
+        die "systemd is not compatible with musl. Choose openrc, runit, s6, or dinit."
+    fi
     if [[ "$INIT_SYSTEM" == "dinit" ]]; then
         warn "dinit is experimental and may have limited service coverage. Proceed with caution."
         prompt "Are you sure? [y/N]: "
@@ -149,6 +162,7 @@ collect_config() {
     echo "  Disk:         $DISK"
     echo "  Firmware:     $FIRMWARE"
     echo "  Filesystem:   $FS_TYPE"
+    echo "  libc:         $LIBC"
     echo "  Init system:  $INIT_SYSTEM"
     echo "  Desktop:      $DESKTOP"
     echo "  Kernel:       $KERNEL_METHOD"
@@ -233,13 +247,21 @@ phase_stage3() {
 
     # Each init system has its own stage3 subdirectory and filename on Gentoo mirrors
     local stage3_variant stage3_dir
-    case "$INIT_SYSTEM" in
-        openrc)  stage3_variant="amd64-openrc";  stage3_dir="current-stage3-amd64-openrc" ;;
-        systemd) stage3_variant="amd64-systemd"; stage3_dir="current-stage3-amd64-systemd" ;;
-        runit)   stage3_variant="amd64-runit";   stage3_dir="current-stage3-amd64-runit" ;;
-        s6)      stage3_variant="amd64-s6";      stage3_dir="current-stage3-amd64-s6" ;;
-        dinit)   stage3_variant="amd64-dinit";   stage3_dir="current-stage3-amd64-dinit" ;;
-    esac
+    if [[ "$LIBC" == "musl" ]]; then
+        # musl only supports openrc; systemd is not compatible with musl
+        case "$INIT_SYSTEM" in
+            openrc) stage3_variant="amd64-musl"; stage3_dir="current-stage3-amd64-musl" ;;
+            *)      stage3_variant="amd64-musl-openrc"; stage3_dir="current-stage3-amd64-musl-openrc" ;;
+        esac
+    else
+        case "$INIT_SYSTEM" in
+            openrc)  stage3_variant="amd64-openrc";  stage3_dir="current-stage3-amd64-openrc" ;;
+            systemd) stage3_variant="amd64-systemd"; stage3_dir="current-stage3-amd64-systemd" ;;
+            runit)   stage3_variant="amd64-runit";   stage3_dir="current-stage3-amd64-runit" ;;
+            s6)      stage3_variant="amd64-s6";      stage3_dir="current-stage3-amd64-s6" ;;
+            dinit)   stage3_variant="amd64-dinit";   stage3_dir="current-stage3-amd64-dinit" ;;
+        esac
+    fi
 
     local latest_file="latest-stage3-${stage3_variant}.txt"
     local latest_url="${STAGE3_MIRROR}/${stage3_dir}/${latest_file}"
@@ -392,11 +414,14 @@ echo "[chroot] Syncing Portage tree..."
 emerge-webrsync -q
 
 echo "[chroot] Selecting profile..."
-case "${INIT_SYSTEM}" in
-    systemd) eselect profile set default/linux/amd64/23.0/systemd ;;
-    # runit, s6, dinit all use the base OpenRC profile; the init is swapped post-install
-    *)       eselect profile set default/linux/amd64/23.0 ;;
-esac
+if [[ "${LIBC}" == "musl" ]]; then
+    eselect profile set default/linux/amd64/23.0/musl
+else
+    case "${INIT_SYSTEM}" in
+        systemd) eselect profile set default/linux/amd64/23.0/systemd ;;
+        *)       eselect profile set default/linux/amd64/23.0 ;;
+    esac
+fi
 
 echo "[chroot] Setting timezone..."
 echo "${TIMEZONE}" > /etc/timezone
@@ -551,6 +576,7 @@ CHROOT_SCRIPT
         FS_TYPE="$FS_TYPE" \
         DISK="$DISK" \
         DESKTOP="$DESKTOP" \
+        LIBC="$LIBC" \
         root_uuid="$root_uuid" \
         swap_uuid="$swap_uuid" \
         fstab_efi="$fstab_efi" \
