@@ -233,15 +233,17 @@ phase_stage3() {
     esac
 
     local latest_file="latest-stage3-${stage3_variant}.txt"
-    local stage3_path
-    stage3_path=$(curl -s "${STAGE3_MIRROR}/${stage3_dir}/${latest_file}" \
-        | grep -v '^#' | head -1 | awk '{print $1}')
+    local latest_url="${STAGE3_MIRROR}/${stage3_dir}/${latest_file}"
 
-    [[ -n "$stage3_path" ]] || die "Failed to fetch stage3 URL for ${INIT_SYSTEM}."
-
-    local stage3_url="${STAGE3_MIRROR}/${stage3_dir}/${stage3_path}"
+    # The txt file is PGP-signed; extract just the tarball filename line
     local stage3_file
-    stage3_file=$(basename "$stage3_path")
+    stage3_file=$(curl -s "$latest_url" \
+        | grep -v '^#' | grep -v '^-' | grep '\.tar\.' | awk '{print $1}' | head -1)
+
+    [[ -n "$stage3_file" ]] || die "Failed to parse stage3 filename for ${INIT_SYSTEM}."
+
+    # The tarball sits directly in the same directory as the txt file
+    local stage3_url="${STAGE3_MIRROR}/${stage3_dir}/${stage3_file}"
 
     info "Downloading $stage3_file..."
     cd "$MOUNT_ROOT"
