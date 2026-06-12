@@ -18,6 +18,7 @@ A single-script interactive Gentoo installer. Boot the **Gentoo minimal ISO**, t
 ```bash
 git clone https://github.com/raijularp/gentoo-install
 cd gentoo-install
+chmod +x gentoo-install
 ./gentoo-install
 ```
 
