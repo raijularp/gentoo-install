@@ -163,6 +163,14 @@ collect_config() {
 
 # ─── Phase 1: Partition & Format ──────────────────────────────────────────────
 phase_disk() {
+    info "Unmounting any existing mounts on $DISK..."
+    swapoff -a 2>/dev/null || true
+    umount -R "$MOUNT_ROOT" 2>/dev/null || true
+    # Force unmount any partitions on the target disk
+    for part in $(lsblk -lno NAME "$DISK" | tail -n +2); do
+        umount -l "/dev/$part" 2>/dev/null || true
+    done
+
     info "Partitioning $DISK..."
 
     # Determine partition names (nvme uses p1/p2, sata uses 1/2)
