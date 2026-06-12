@@ -1,8 +1,8 @@
 # gentoo-install
 
-> **This project is fully vibecoded and was written entirely by [Claude Code](https://claude.ai/code) (Anthropic's AI coding agent) as a proof-of-concept and capability test.**
->
-> It was not written by a human. The user directed what to build; Claude Code wrote every line of code, made every design decision, and researched package names and installation procedures autonomously.
+> This is a Gentoo installation script and a proof of concept for complex tasks for Claude Code. **THIS IS FULLY VIBECODED.** So don't fucking hate me, hate Claude.
+
+> **Written entirely by [Claude Code](https://claude.ai/code) (Anthropic's AI coding agent).** The user directed what to build; Claude Code wrote every line, made every design decision, and researched package names autonomously.
 >
 > **Use at your own risk.** This has not been tested on real hardware. If it works well enough for you to use — great. If it doesn't — that's also useful information about where Claude Code is at.
 
@@ -16,7 +16,7 @@ A single-script interactive Gentoo installer. Boot the **Gentoo minimal ISO**, t
 > Boot from the ISO, get a shell, then:
 
 ```bash
-git clone https://github.com/yourname/gentoo-install
+git clone https://github.com/raijularp/gentoo-install
 cd gentoo-install
 ./gentoo-install
 ```
