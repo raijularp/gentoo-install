@@ -189,6 +189,7 @@ phase_disk() {
         parted -s "$DISK" mkpart root "$FS_TYPE" 4099MiB 100%
         PART_SWAP="${PART_PREFIX}2"
         PART_ROOT="${PART_PREFIX}3"
+        PART_EFI=""
     fi
 
     info "Formatting partitions..."
@@ -357,15 +358,15 @@ phase_chroot() {
         sway)     desktop_pkgs="gui-wm/sway $WAYLAND_BASE" ;;
         hyprland) desktop_pkgs="gui-wm/hyprland gui-apps/hyprpaper $WAYLAND_BASE" ;;
         niri)     desktop_pkgs="gui-wm/niri $WAYLAND_BASE" ;;
-        river)    desktop_pkgs="gui-wm/river gui-apps/riverctl $WAYLAND_BASE" ;;
+        river)    desktop_pkgs="gui-wm/river $WAYLAND_BASE" ;;
         wayfire)  desktop_pkgs="gui-wm/wayfire gui-wm/wcm $WAYLAND_BASE" ;;
         labwc)    desktop_pkgs="gui-wm/labwc $WAYLAND_BASE" ;;
         mangowm)  desktop_pkgs="gui-wm/mangowm gui-libs/scenefx $WAYLAND_BASE" ;;
-        weston)   desktop_pkgs="dev-libs/weston x11-terms/alacritty sys-auth/seatd" ;;
+        weston)   desktop_pkgs="gui-libs/weston x11-terms/alacritty sys-auth/seatd" ;;
     esac
 
     # WMs use lightdm; Wayland compositors use greetd; big DEs have their own
-    local dm_pkg="" dm_service="" desktop_pkgs=""
+    local dm_pkg="" dm_service=""
     case "$DESKTOP" in
         kde)   dm_pkg="x11-misc/sddm";  dm_service="sddm" ;;
         gnome) dm_pkg="gnome-base/gdm"; dm_service="gdm" ;;
@@ -397,7 +398,8 @@ echo "[chroot] Setting locale..."
 echo "${LOCALE} UTF-8" >> /etc/locale.gen
 locale-gen
 eselect locale set "$(locale -a | grep -i "${LOCALE%%.*}" | head -1)"
-env-update && source /etc/profile
+env-update
+source /etc/profile 2>/dev/null || true
 
 echo "[chroot] Installing kernel sources..."
 emerge -q sys-kernel/gentoo-sources sys-kernel/linux-firmware
@@ -494,11 +496,7 @@ esac
 echo "[chroot] Installing GRUB..."
 emerge -q sys-boot/grub
 
-if [[ "${FIRMWARE}" == "uefi" ]]; then
-    grub-install ${grub_target}
-else
-    grub-install ${grub_target}
-fi
+grub-install ${grub_target}
 grub-mkconfig -o /boot/grub/grub.cfg
 
 if [[ -n "${desktop_pkgs}" ]]; then
