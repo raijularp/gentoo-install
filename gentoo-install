@@ -534,6 +534,7 @@ CHROOT_SCRIPT
     info "Entering chroot..."
     env -i \
         HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        TERM=linux DEBUGINFOD_URLS="" \
         INIT_SYSTEM="$INIT_SYSTEM" \
         TIMEZONE="$TIMEZONE" \
         LOCALE="$LOCALE" \
