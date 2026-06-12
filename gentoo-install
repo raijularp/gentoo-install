@@ -53,6 +53,7 @@ collect_config() {
     echo
     echo "  glibc — default, broadest compatibility"
     echo "  musl  — lightweight, minimal, stricter standards compliance"
+    echo "          (if you're choosing this you likely already know the downsides)"
     echo
     prompt "libc [glibc/musl] (default: glibc): "
     read -r LIBC
