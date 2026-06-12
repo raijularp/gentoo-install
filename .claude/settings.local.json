@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh repo *)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:packages.gentoo.org)",
+      "WebFetch(domain:mangowm.github.io)",
+      "Bash(gh search *)",
+      "WebFetch(domain:raw.githubusercontent.com)"
+    ]
+  }
+}
