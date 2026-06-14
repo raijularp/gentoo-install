@@ -97,6 +97,7 @@ You still choose: disk, compositor, init, timezone, hostname, password." 22 60
     ROOT_PASSWORD="$pw1"
 
     # Set fixed preset values
+    CUSTOM_USE=""
     LIBC="glibc"
     FS_TYPE="btrfs"
     KERNEL_METHOD="genkernel"
@@ -460,6 +461,16 @@ Are you sure you want dwm?" 10 56 || exit 0
         GREETER=$(result)
     fi
 
+    # ── Custom USE flags ──
+    d --title "Custom USE Flags" --inputbox \
+"Add any extra USE flags (space-separated).
+Leave blank for none.
+
+These are appended after the auto-generated flags.
+Example: -pulseaudio nls offensive" \
+12 66 ""
+    CUSTOM_USE=$(result)
+
     # ── Kernel ──
     d --title "Kernel Build" --menu "Choose kernel build method:" 10 64 2 \
         "genkernel" "Automated — recommended for most users" \
@@ -691,7 +702,7 @@ FFLAGS="\${COMMON_FLAGS}"
 MAKEOPTS="-j${cpu_count}"
 EMERGE_DEFAULT_OPTS="--jobs=${cpu_count} --load-average=${cpu_count}"
 
-USE="${use_flags}"
+USE="${use_flags}${CUSTOM_USE:+ $CUSTOM_USE}"
 
 VIDEO_CARDS="intel amdgpu radeon nouveau"
 INPUT_DEVICES="libinput"
@@ -1188,6 +1199,7 @@ CHROOT_SCRIPT
         dm_pkg="$dm_pkg" \
         dm_service="$dm_service" \
         audio_pkgs="$audio_pkgs" \
+        CUSTOM_USE="${CUSTOM_USE:-}" \
         chroot "$MOUNT_ROOT" /bin/bash /setup-chroot.sh
 
     rm -f "$MOUNT_ROOT/setup-chroot.sh"
