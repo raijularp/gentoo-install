@@ -632,6 +632,13 @@ phase_disk() {
         PART_EFI=""; PART_BOOT=""
     fi
 
+    # Ensure filesystem tools are available (minimal ISO may be missing some)
+    case "$FS_TYPE" in
+        xfs)   command -v mkfs.xfs   &>/dev/null || { info_box "Installing xfsprogs...";   emerge -q sys-fs/xfsprogs;   } ;;
+        btrfs) command -v mkfs.btrfs &>/dev/null || { info_box "Installing btrfs-progs..."; emerge -q sys-fs/btrfs-progs; } ;;
+        zfs)   command -v zpool      &>/dev/null || { info_box "Installing ZFS tools...";   emerge -q sys-fs/zfs;        } ;;
+    esac
+
     info_box "Formatting partitions..."
     [[ -n "$PART_EFI"  ]] && mkfs.vfat -F32 "$PART_EFI"
     [[ -n "$PART_BOOT" ]] && mkfs.ext4 -F -L boot "$PART_BOOT"
