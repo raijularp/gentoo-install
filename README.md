@@ -1,6 +1,7 @@
 # gentoo-install
 
 > This is a Gentoo installation script and a proof of concept for complex tasks for Claude Code. **THIS IS FULLY VIBECODED.** So don't fucking hate me, hate Claude.
+> NOTE: This completely throws the gentoo philosophy in the trash if you are a new user trying to find a easy way to get into gentoo MANUALLY INSTALL IT. If you feel the need to install gentoo AND you're a new user you likely feel for some gentoo propaganda (which is fine it is the best linux distro) however if you do not feel ready for a manual install you shouldnt even think about using gentoo, gentoo does have some extremely difficult  challenges for a new user or a not seasoned gentoo user, so if you're reading this and this happens to be you. DO NOT FUCKING USE THIS SCRIPT This is a test for claude NOT SOMETHING TO BE USED (yet lul) 
 
 > **Written entirely by [Claude Code](https://claude.ai/code) (Anthropic's AI coding agent).** The user directed what to build; Claude Code wrote every line, made every design decision, and researched package names autonomously.
 >
