@@ -1,215 +1,212 @@
 #!/usr/bin/env bash
-# Gentoo Installation Script
-# Usage: ./gentoo-install
-# Run as root from a live environment (e.g. Gentoo minimal ISO, SystemRescue)
+# Gentoo Installation Script — vibecoded by Claude Code
+# Run as root from the Gentoo minimal ISO
 
 set -euo pipefail
 
-# ─── Colors ───────────────────────────────────────────────────────────────────
-RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'
-CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
-
-info()    { echo -e "${CYAN}${BOLD}[*]${RESET} $*"; }
-success() { echo -e "${GREEN}${BOLD}[✓]${RESET} $*"; }
-warn()    { echo -e "${YELLOW}${BOLD}[!]${RESET} $*"; }
-die()     { echo -e "${RED}${BOLD}[✗]${RESET} $*" >&2; exit 1; }
-prompt()  { echo -e "${BOLD}${1}${RESET}"; }
-
-# ─── Sanity checks ────────────────────────────────────────────────────────────
-[[ $EUID -ne 0 ]] && die "This script must be run as root."
-command -v curl   &>/dev/null || die "curl is required but not installed."
-command -v parted &>/dev/null || die "parted is required but not installed."
-command -v mkfs.ext4 &>/dev/null || die "e2fsprogs is required but not installed."
-
-# ─── Configuration ────────────────────────────────────────────────────────────
 MOUNT_ROOT="/mnt/gentoo"
 STAGE3_MIRROR="https://distfiles.gentoo.org/releases/amd64/autobuilds"
+BACKTITLE="Gentoo Installer  |  vibecoded by Claude Code  |  proof-of-concept"
+TMP=$(mktemp)
+trap 'rm -f "$TMP"' EXIT
 
+# ─── Sanity checks ────────────────────────────────────────────────────────────
+[[ $EUID -ne 0 ]]        && { echo "Run as root."; exit 1; }
+command -v dialog    &>/dev/null || { echo "dialog is required. Run: emerge dialog"; exit 1; }
+command -v curl      &>/dev/null || { echo "curl is required.";   exit 1; }
+command -v parted    &>/dev/null || { echo "parted is required."; exit 1; }
+command -v mkfs.ext4 &>/dev/null || { echo "e2fsprogs is required."; exit 1; }
+
+# ─── TUI helpers ──────────────────────────────────────────────────────────────
+# All dialog calls write their result to $TMP via stderr redirect
+d()      { dialog --backtitle "$BACKTITLE" "$@" 2>"$TMP"; }
+result() { cat "$TMP"; }
+die()    { dialog --backtitle "$BACKTITLE" --title "Fatal Error" --msgbox "$*" 8 60; exit 1; }
+info_box() { dialog --backtitle "$BACKTITLE" --title "Installing..." --infobox "$*" 5 60; }
+
+# ─── Configuration ────────────────────────────────────────────────────────────
 collect_config() {
-    echo
-    echo -e "${BOLD}╔══════════════════════════════════════════╗${RESET}"
-    echo -e "${BOLD}║       Gentoo Installation Script         ║${RESET}"
-    echo -e "${BOLD}╚══════════════════════════════════════════╝${RESET}"
-    echo
+    d --title "Welcome" --msgbox \
+"Gentoo Installation Script
 
-    # ── Target disk ──
-    info "Available disks:"
-    lsblk -d -o NAME,SIZE,MODEL | grep -v loop
-    echo
-    prompt "Target disk (e.g. /dev/sda, /dev/nvme0n1): "
-    read -r DISK
-    [[ -b "$DISK" ]] || die "Not a block device: $DISK"
+This installer is fully vibecoded — written entirely by Claude Code
+as a proof-of-concept. Use at your own risk.
 
-    # ── Firmware type ──
+It has not been formally tested. If it works for you — great.
+If it doesn't — that is also useful information.
+
+Press OK to begin." 13 64
+
+    # ── Disk ──
+    local disk_args=()
+    while IFS= read -r line; do
+        local name size model
+        name=$(awk '{print $1}' <<< "$line")
+        size=$(awk '{print $2}' <<< "$line")
+        model=$(awk '{$1=$2=""; print $0}' <<< "$line" | xargs)
+        disk_args+=("/dev/$name" "$size  $model")
+    done < <(lsblk -d -o NAME,SIZE,MODEL --noheadings | grep -v loop)
+
+    d --title "Target Disk" \
+      --menu "Select the disk to install Gentoo on.\nWARNING: it will be completely wiped." \
+      18 70 8 "${disk_args[@]}"
+    DISK=$(result)
+    [[ -b "$DISK" ]] || die "No disk selected."
+
+    # ── Firmware — auto-detected ──
     if [[ -d /sys/firmware/efi ]]; then
         SYS_FIRMWARE="uefi"
-        success "UEFI firmware detected."
     else
         SYS_FIRMWARE="bios"
-        success "BIOS/Legacy firmware detected."
     fi
+    d --title "Firmware" --msgbox \
+"Auto-detected: ${SYS_FIRMWARE^^}
+
+Firmware type has been detected from the live environment.
+No action needed." 9 50
 
     # ── libc ──
-    echo
-    echo "  glibc — default, broadest compatibility"
-    echo "  musl  — lightweight, minimal, stricter standards compliance"
-    echo "          (if you're choosing this you likely already know the downsides)"
-    echo
-    prompt "libc [glibc/musl] (default: glibc): "
-    read -r LIBC
-    LIBC="${LIBC:-glibc}"
-    [[ "$LIBC" =~ ^(glibc|musl)$ ]] || die "Unsupported libc: $LIBC"
+    d --title "C Library" --menu "Choose your C library:" 11 66 2 \
+        "glibc" "Default — broadest software compatibility" \
+        "musl"  "Lightweight — if you're choosing this you likely know the downsides"
+    LIBC=$(result)
 
     # ── Filesystem ──
-    echo
-    echo "  ext4 — solid, well-tested default"
-    echo "  btrfs — copy-on-write, snapshots, checksums"
-    echo "  xfs  — high performance, good for large files"
-    echo "  zfs  — advanced CoW, snapshots, built-in RAID, compression (advanced)"
-    echo
-    prompt "Root filesystem [ext4/btrfs/xfs/zfs] (default: ext4): "
-    read -r FS_TYPE
-    FS_TYPE="${FS_TYPE:-ext4}"
-    [[ "$FS_TYPE" =~ ^(ext4|btrfs|xfs|zfs)$ ]] || die "Unsupported filesystem: $FS_TYPE"
+    d --title "Root Filesystem" --menu "Choose the root filesystem:" 14 66 4 \
+        "ext4"  "Solid, well-tested default" \
+        "btrfs" "Copy-on-write, snapshots, checksums" \
+        "xfs"   "High performance, good for large files" \
+        "zfs"   "Advanced CoW, snapshots, built-in RAID (advanced)"
+    FS_TYPE=$(result)
+
     if [[ "$FS_TYPE" == "zfs" ]]; then
-        warn "ZFS root requires a separate /boot partition and ZFS kernel modules in the initramfs."
-        warn "genkernel will be used regardless of your kernel choice to build ZFS support in."
-        prompt "Are you sure? [y/N]: "
-        read -r ZFS_CONFIRM
-        [[ "$ZFS_CONFIRM" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+        d --title "ZFS Notice" --yesno \
+"ZFS root requires a separate /boot partition and ZFS kernel
+modules built into the initramfs.
+
+genkernel will be used regardless of your kernel method choice.
+
+Continue with ZFS?" 10 60 || exit 0
     fi
 
     # ── Init system ──
-    echo
-    echo "  openrc   — default Gentoo, lightweight, script-based"
-    echo "  systemd  — full systemd (PID 1, journald, networkd, etc.)"
-    echo "  runit    — supervision-based, very fast boot, minimal"
-    echo "  s6       — skarnet supervision suite, low-overhead"
-    echo "  dinit    — dependency-ordered, modern, easy to configure (not recommended — experimental)"
-    echo
-    prompt "Init system [openrc/systemd/runit/s6/dinit] (default: openrc): "
-    read -r INIT_SYSTEM
-    INIT_SYSTEM="${INIT_SYSTEM:-openrc}"
-    [[ "$INIT_SYSTEM" =~ ^(openrc|systemd|runit|s6|dinit)$ ]] || die "Unsupported init system: $INIT_SYSTEM"
+    d --title "Init System" --menu "Choose your init system:" 16 72 5 \
+        "openrc"  "Default Gentoo — lightweight, script-based" \
+        "systemd" "Full systemd — journald, networkd, socket activation" \
+        "runit"   "Supervision-based — very fast boot, minimal" \
+        "s6"      "skarnet supervision suite — low overhead" \
+        "dinit"   "Dependency-ordered, modern (experimental — not recommended)"
+    INIT_SYSTEM=$(result)
+
     if [[ "$INIT_SYSTEM" == "systemd" && "$LIBC" == "musl" ]]; then
-        die "systemd is not compatible with musl. Choose openrc, runit, s6, or dinit."
+        die "systemd is not compatible with musl.\nPlease go back and choose a different init system or libc."
     fi
+
     if [[ "$INIT_SYSTEM" == "dinit" ]]; then
-        warn "dinit is experimental and may have limited service coverage. Proceed with caution."
-        prompt "Are you sure? [y/N]: "
-        read -r DINIT_CONFIRM
-        [[ "$DINIT_CONFIRM" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+        d --title "dinit Warning" --yesno \
+"dinit is experimental and may have limited service coverage
+in the Gentoo ecosystem. Some packages may not have dinit
+service files yet.
+
+Are you sure you want to use dinit?" 10 58 || exit 0
     fi
 
-    # ── Profile / desktop ──
-    echo
-    echo "  Desktop environments:"
-    echo "    none     — bare system, no GUI"
-    echo "    kde      — KDE Plasma"
-    echo "    gnome    — GNOME"
-    echo "    xfce     — XFCE"
-    echo "  Window managers (Xorg):"
-    echo "    i3       — tiling, keyboard-driven"
-    echo "    openbox  — floating, highly configurable"
-    echo "    bspwm    — binary space partitioning tiling WM"
-    echo "    dwm      — suckless tiling WM (not recommended — requires manual patching/config)"
-    echo "  Wayland compositors:"
-    echo "    sway     — i3-compatible, stable and widely used"
-    echo "    hyprland — dynamic tiling, highly customizable, eye candy"
-    echo "    niri     — scrollable tiling, card-based layout"
-    echo "    river    — dynamic tiling, scriptable with Lua"
-    echo "    wayfire  — 3D effects, plugin-based"
-    echo "    labwc    — openbox-like floating compositor"
-    echo "    mangowm  — minimalist Wayland WM"
-    echo "    weston   — reference Wayland compositor, very minimal"
-    echo
-    prompt "Choice [none/kde/gnome/xfce/i3/openbox/bspwm/dwm/sway/hyprland/niri/river/wayfire/labwc/mangowm/weston] (default: none): "
-    read -r DESKTOP
-    DESKTOP="${DESKTOP:-none}"
-    [[ "$DESKTOP" =~ ^(none|kde|gnome|xfce|i3|openbox|bspwm|dwm|sway|hyprland|niri|river|wayfire|labwc|mangowm|weston)$ ]] \
-        || die "Unsupported desktop: $DESKTOP"
+    # ── Desktop / WM / Compositor ──
+    d --title "Desktop Environment / WM" \
+      --menu "Choose a desktop, window manager, or compositor:" 28 76 16 \
+        "none"     "Bare system — no GUI" \
+        "kde"      "KDE Plasma (Xorg)" \
+        "gnome"    "GNOME (Xorg)" \
+        "xfce"     "XFCE (Xorg)" \
+        "i3"       "Tiling WM — keyboard-driven (Xorg)" \
+        "openbox"  "Floating WM — highly configurable (Xorg)" \
+        "bspwm"    "Binary space partitioning tiling WM (Xorg)" \
+        "dwm"      "Suckless tiling WM — requires manual patching (Xorg)" \
+        "sway"     "i3-compatible Wayland compositor — stable" \
+        "hyprland" "Dynamic tiling Wayland — highly customizable" \
+        "niri"     "Scrollable tiling Wayland compositor" \
+        "river"    "Dynamic tiling Wayland — scriptable" \
+        "wayfire"  "3D effects, plugin-based Wayland compositor" \
+        "labwc"    "Openbox-like floating Wayland compositor" \
+        "mangowm"  "Minimalist dwl-based Wayland compositor (GURU overlay)" \
+        "weston"   "Reference Wayland compositor — very minimal"
+    DESKTOP=$(result)
+
     if [[ "$DESKTOP" == "dwm" ]]; then
-        warn "dwm ships with minimal defaults and is designed to be patched and recompiled by hand."
-        warn "The ebuild installs a stock build — you will likely want to customize it post-install."
-        prompt "Are you sure? [y/N]: "
-        read -r DWM_CONFIRM
-        [[ "$DWM_CONFIRM" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+        d --title "DWM Warning" --yesno \
+"dwm is designed to be patched and recompiled by hand.
+The ebuild installs a stock unpatched build — you will
+almost certainly want to customize it post-install.
+
+Are you sure you want dwm?" 10 56 || exit 0
     fi
 
-    # ── Kernel strategy ──
-    echo
-    prompt "Kernel build method [genkernel/manual] (default: genkernel): "
-    read -r KERNEL_METHOD
-    KERNEL_METHOD="${KERNEL_METHOD:-genkernel}"
+    # ── Kernel ──
+    d --title "Kernel Build" --menu "Choose kernel build method:" 10 64 2 \
+        "genkernel" "Automated — recommended for most users" \
+        "manual"    "Manual — configure and compile yourself post-install"
+    KERNEL_METHOD=$(result)
 
-    # ── Locale / timezone ──
-    echo
-    prompt "Timezone (e.g. America/New_York, Europe/Berlin): "
-    read -r TIMEZONE
-    [[ -f "/usr/share/zoneinfo/$TIMEZONE" ]] || \
-        warn "Could not verify timezone '$TIMEZONE' — continuing anyway."
+    # ── Timezone ──
+    d --title "Timezone" --inputbox \
+"Enter your timezone:\n(e.g. America/New_York, Europe/Berlin, Asia/Tokyo)" \
+9 56 "UTC"
+    TIMEZONE=$(result)
+    [[ -n "$TIMEZONE" ]] || TIMEZONE="UTC"
 
-    prompt "Locale (e.g. en_US.UTF-8): "
-    read -r LOCALE
-    LOCALE="${LOCALE:-en_US.UTF-8}"
+    # ── Locale ──
+    d --title "Locale" --inputbox "Enter your locale:" 8 50 "en_US.UTF-8"
+    LOCALE=$(result)
+    [[ -n "$LOCALE" ]] || LOCALE="en_US.UTF-8"
 
     # ── Hostname ──
-    echo
-    prompt "Hostname (default: gentoo): "
-    read -r HOSTNAME
-    HOSTNAME="${HOSTNAME:-gentoo}"
+    d --title "Hostname" --inputbox "Enter hostname for this machine:" 8 50 "gentoo"
+    HOSTNAME=$(result)
+    [[ -n "$HOSTNAME" ]] || HOSTNAME="gentoo"
 
     # ── Root password ──
-    echo
-    prompt "Root password: "
-    read -rs ROOT_PASSWORD
-    echo
-    prompt "Confirm root password: "
-    read -rs ROOT_PASSWORD2
-    echo
-    [[ "$ROOT_PASSWORD" == "$ROOT_PASSWORD2" ]] || die "Passwords do not match."
+    local pw1 pw2
+    d --title "Root Password" --passwordbox "Enter root password:" 8 50
+    pw1=$(result)
+    d --title "Root Password" --passwordbox "Confirm root password:" 8 50
+    pw2=$(result)
+    [[ "$pw1" == "$pw2" ]] || die "Passwords do not match."
+    [[ -n "$pw1" ]]         || die "Password cannot be empty."
+    ROOT_PASSWORD="$pw1"
 
-    # ── Summary ──
-    echo
-    echo -e "${BOLD}── Installation Summary ──────────────────────${RESET}"
-    echo "  Disk:         $DISK"
-    echo "  Firmware:     $SYS_FIRMWARE"
-    echo "  Filesystem:   $FS_TYPE"
-    echo "  libc:         $LIBC"
-    echo "  Init system:  $INIT_SYSTEM"
-    echo "  Desktop:      $DESKTOP"
-    echo "  Kernel:       $KERNEL_METHOD"
-    echo "  Timezone:     $TIMEZONE"
-    echo "  Hostname:     $HOSTNAME"
-    echo
-    warn "ALL DATA ON $DISK WILL BE DESTROYED."
-    prompt "Continue? [y/N]: "
-    read -r CONFIRM
-    [[ "$CONFIRM" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+    # ── Summary + confirm ──
+    d --title "Confirm Installation" --yesno \
+"Installation Summary
+────────────────────────────────────
+  Disk:        $DISK
+  Firmware:    $SYS_FIRMWARE
+  libc:        $LIBC
+  Filesystem:  $FS_TYPE
+  Init system: $INIT_SYSTEM
+  Desktop:     $DESKTOP
+  Kernel:      $KERNEL_METHOD
+  Timezone:    $TIMEZONE
+  Hostname:    $HOSTNAME
+────────────────────────────────────
+  ALL DATA ON $DISK WILL BE DESTROYED.
+
+Proceed with installation?" 22 52
 }
 
-# ─── Phase 1: Partition & Format ──────────────────────────────────────────────
+# ─── Phase 1: Disk ────────────────────────────────────────────────────────────
 phase_disk() {
-    info "Unmounting any existing mounts on $DISK..."
+    info_box "Unmounting any existing mounts on $DISK..."
     swapoff -a 2>/dev/null || true
     umount -R "$MOUNT_ROOT" 2>/dev/null || true
-    # Force unmount any partitions on the target disk
     for part in $(lsblk -lno NAME "$DISK" | tail -n +2); do
         umount -l "/dev/$part" 2>/dev/null || true
     done
 
-    info "Partitioning $DISK..."
-
-    # Determine partition names (nvme uses p1/p2, sata uses 1/2)
-    if [[ "$DISK" =~ nvme ]]; then
-        PART_PREFIX="${DISK}p"
-    else
-        PART_PREFIX="${DISK}"
-    fi
+    info_box "Partitioning $DISK..."
+    [[ "$DISK" =~ nvme ]] && PART_PREFIX="${DISK}p" || PART_PREFIX="${DISK}"
 
     parted -s "$DISK" mklabel gpt
 
-    # ZFS needs a dedicated /boot partition since GRUB ZFS support is unreliable
     if [[ "$FS_TYPE" == "zfs" ]]; then
         if [[ "$SYS_FIRMWARE" == "uefi" ]]; then
             parted -s "$DISK" mkpart ESP fat32 1MiB 513MiB
@@ -217,66 +214,49 @@ phase_disk() {
             parted -s "$DISK" mkpart boot ext4 513MiB 1537MiB
             parted -s "$DISK" mkpart swap linux-swap 1537MiB 5633MiB
             parted -s "$DISK" mkpart root zfs 5633MiB 100%
-            PART_EFI="${PART_PREFIX}1"
-            PART_BOOT="${PART_PREFIX}2"
-            PART_SWAP="${PART_PREFIX}3"
-            PART_ROOT="${PART_PREFIX}4"
+            PART_EFI="${PART_PREFIX}1"; PART_BOOT="${PART_PREFIX}2"
+            PART_SWAP="${PART_PREFIX}3"; PART_ROOT="${PART_PREFIX}4"
         else
             parted -s "$DISK" mkpart bios_grub 1MiB 3MiB
             parted -s "$DISK" set 1 bios_grub on
             parted -s "$DISK" mkpart boot ext4 3MiB 1027MiB
             parted -s "$DISK" mkpart swap linux-swap 1027MiB 5123MiB
             parted -s "$DISK" mkpart root zfs 5123MiB 100%
-            PART_EFI=""
-            PART_BOOT="${PART_PREFIX}2"
-            PART_SWAP="${PART_PREFIX}3"
-            PART_ROOT="${PART_PREFIX}4"
+            PART_EFI=""; PART_BOOT="${PART_PREFIX}2"
+            PART_SWAP="${PART_PREFIX}3"; PART_ROOT="${PART_PREFIX}4"
         fi
     elif [[ "$SYS_FIRMWARE" == "uefi" ]]; then
         parted -s "$DISK" mkpart ESP fat32 1MiB 513MiB
         parted -s "$DISK" set 1 esp on
         parted -s "$DISK" mkpart swap linux-swap 513MiB 4609MiB
         parted -s "$DISK" mkpart root "$FS_TYPE" 4609MiB 100%
-        PART_EFI="${PART_PREFIX}1"
-        PART_SWAP="${PART_PREFIX}2"
-        PART_ROOT="${PART_PREFIX}3"
-        PART_BOOT=""
+        PART_EFI="${PART_PREFIX}1"; PART_SWAP="${PART_PREFIX}2"
+        PART_ROOT="${PART_PREFIX}3"; PART_BOOT=""
     else
         parted -s "$DISK" mkpart bios_grub 1MiB 3MiB
         parted -s "$DISK" set 1 bios_grub on
         parted -s "$DISK" mkpart swap linux-swap 3MiB 4099MiB
         parted -s "$DISK" mkpart root "$FS_TYPE" 4099MiB 100%
-        PART_SWAP="${PART_PREFIX}2"
-        PART_ROOT="${PART_PREFIX}3"
-        PART_EFI=""
-        PART_BOOT=""
+        PART_SWAP="${PART_PREFIX}2"; PART_ROOT="${PART_PREFIX}3"
+        PART_EFI=""; PART_BOOT=""
     fi
 
-    info "Formatting partitions..."
-
-    [[ -n "$PART_EFI" ]] && mkfs.vfat -F32 "$PART_EFI"
+    info_box "Formatting partitions..."
+    [[ -n "$PART_EFI"  ]] && mkfs.vfat -F32 "$PART_EFI"
     [[ -n "$PART_BOOT" ]] && mkfs.ext4 -F -L boot "$PART_BOOT"
-
-    mkswap "$PART_SWAP"
-    swapon "$PART_SWAP"
+    mkswap "$PART_SWAP" && swapon "$PART_SWAP"
 
     case "$FS_TYPE" in
         ext4)  mkfs.ext4  -F -L root "$PART_ROOT" ;;
         btrfs) mkfs.btrfs -f -L root "$PART_ROOT" ;;
         xfs)   mkfs.xfs   -f -L root "$PART_ROOT" ;;
         zfs)
-            # Destroy any existing pool on this partition
             zpool destroy rpool 2>/dev/null || true
             zpool create -f \
                 -o ashift=12 \
-                -O acltype=posixacl \
-                -O compression=lz4 \
-                -O dnodesize=auto \
-                -O normalization=formD \
-                -O relatime=on \
-                -O xattr=sa \
-                -O mountpoint=none \
-                rpool "$PART_ROOT"
+                -O acltype=posixacl -O compression=lz4 -O dnodesize=auto \
+                -O normalization=formD -O relatime=on -O xattr=sa \
+                -O mountpoint=none rpool "$PART_ROOT"
             zfs create -o mountpoint=/ rpool/root
             zfs create -o mountpoint=/home rpool/home
             zfs create -o mountpoint=/var/log rpool/log
@@ -284,9 +264,8 @@ phase_disk() {
             ;;
     esac
 
-    info "Mounting filesystems..."
+    info_box "Mounting filesystems..."
     mkdir -p "$MOUNT_ROOT"
-
     if [[ "$FS_TYPE" == "zfs" ]]; then
         zpool import -d "/dev/disk/by-id" -R "$MOUNT_ROOT" rpool
         zfs mount rpool/root
@@ -295,30 +274,18 @@ phase_disk() {
     else
         mount "$PART_ROOT" "$MOUNT_ROOT"
     fi
-
-    if [[ -n "$PART_BOOT" ]]; then
-        mkdir -p "$MOUNT_ROOT/boot"
-        mount "$PART_BOOT" "$MOUNT_ROOT/boot"
-    fi
-
-    if [[ -n "$PART_EFI" ]]; then
-        mkdir -p "$MOUNT_ROOT/boot/efi"
-        mount "$PART_EFI" "$MOUNT_ROOT/boot/efi"
-    fi
-
-    success "Disk setup complete."
+    [[ -n "$PART_BOOT" ]] && { mkdir -p "$MOUNT_ROOT/boot"; mount "$PART_BOOT" "$MOUNT_ROOT/boot"; }
+    [[ -n "$PART_EFI"  ]] && { mkdir -p "$MOUNT_ROOT/boot/efi"; mount "$PART_EFI" "$MOUNT_ROOT/boot/efi"; }
 }
 
 # ─── Phase 2: Stage3 ──────────────────────────────────────────────────────────
 phase_stage3() {
-    info "Fetching latest stage3 URL..."
+    info_box "Fetching latest stage3 URL..."
 
-    # Each init system has its own stage3 subdirectory and filename on Gentoo mirrors
     local stage3_variant stage3_dir
     if [[ "$LIBC" == "musl" ]]; then
-        # musl only supports openrc; systemd is not compatible with musl
         case "$INIT_SYSTEM" in
-            openrc) stage3_variant="amd64-musl"; stage3_dir="current-stage3-amd64-musl" ;;
+            openrc) stage3_variant="amd64-musl";        stage3_dir="current-stage3-amd64-musl" ;;
             *)      stage3_variant="amd64-musl-openrc"; stage3_dir="current-stage3-amd64-musl-openrc" ;;
         esac
     else
@@ -331,47 +298,37 @@ phase_stage3() {
         esac
     fi
 
-    local latest_file="latest-stage3-${stage3_variant}.txt"
-    local latest_url="${STAGE3_MIRROR}/${stage3_dir}/${latest_file}"
-
-    # The txt file is PGP-signed; extract just the tarball filename line
+    local latest_url="${STAGE3_MIRROR}/${stage3_dir}/latest-stage3-${stage3_variant}.txt"
     local stage3_file
     stage3_file=$(curl -s "$latest_url" \
         | grep -v '^#' | grep -v '^-' | grep '\.tar\.' | awk '{print $1}' | head -1)
+    [[ -n "$stage3_file" ]] || die "Failed to fetch stage3 URL for ${INIT_SYSTEM}."
 
-    [[ -n "$stage3_file" ]] || die "Failed to parse stage3 filename for ${INIT_SYSTEM}."
-
-    # The tarball sits directly in the same directory as the txt file
     local stage3_url="${STAGE3_MIRROR}/${stage3_dir}/${stage3_file}"
-
-    info "Downloading $stage3_file..."
+    info_box "Downloading $stage3_file\n(this may take several minutes...)"
     cd "$MOUNT_ROOT"
     curl -L -O "${stage3_url}"
     curl -L -O "${stage3_url}.sha256"
     curl -L -O "${stage3_url}.asc"
 
-    info "Verifying checksum..."
+    info_box "Verifying checksum..."
     sha256sum -c "${stage3_file}.sha256" || die "Stage3 checksum verification failed."
 
-    info "Extracting stage3..."
+    info_box "Extracting stage3..."
     tar xpf "$stage3_file" --xattrs-include='*.*' --numeric-owner
     rm -f "$stage3_file" "${stage3_file}.sha256" "${stage3_file}.asc"
-
     cd /
-    success "Stage3 extracted."
 }
 
-# ─── Phase 3: Portage & make.conf ─────────────────────────────────────────────
+# ─── Phase 3: Portage ─────────────────────────────────────────────────────────
 phase_portage() {
-    info "Configuring make.conf..."
+    info_box "Configuring make.conf..."
 
-    local cpu_count
+    local cpu_count march use_flags
     cpu_count=$(nproc)
-    local march
     march=$(gcc -march=native -Q --help=target 2>/dev/null | grep '^\s*-march=' | awk '{print $2}' || echo "native")
 
-    local use_flags="-bluetooth"
-    # Wayland compositors don't need X USE flag
+    use_flags="-bluetooth"
     if [[ "$DESKTOP" =~ ^(sway|hyprland|niri|river|wayfire|labwc|mangowm|weston)$ ]]; then
         use_flags="wayland $use_flags"
     elif [[ "$DESKTOP" != "none" ]]; then
@@ -386,7 +343,7 @@ phase_portage() {
     esac
 
     cat > "$MOUNT_ROOT/etc/portage/make.conf" <<EOF
-# make.conf — generated by gentoo-install
+# make.conf — generated by gentoo-install (vibecoded by Claude Code)
 COMMON_FLAGS="-march=${march} -O2 -pipe"
 CFLAGS="\${COMMON_FLAGS}"
 CXXFLAGS="\${COMMON_FLAGS}"
@@ -408,15 +365,12 @@ ACCEPT_KEYWORDS="amd64"
 GENTOO_MIRRORS="https://distfiles.gentoo.org"
 EOF
 
-    info "Copying DNS info..."
     cp --dereference /etc/resolv.conf "$MOUNT_ROOT/etc/"
-
-    success "Portage configured."
 }
 
-# ─── Phase 4: Chroot setup ────────────────────────────────────────────────────
+# ─── Phase 4: Chroot ──────────────────────────────────────────────────────────
 phase_chroot() {
-    info "Mounting virtual filesystems..."
+    info_box "Mounting virtual filesystems..."
     mount --types proc  /proc "$MOUNT_ROOT/proc"
     mount --rbind        /sys  "$MOUNT_ROOT/sys"
     mount --make-rslave        "$MOUNT_ROOT/sys"
@@ -424,32 +378,24 @@ phase_chroot() {
     mount --make-rslave        "$MOUNT_ROOT/dev"
     mount --bind         /run  "$MOUNT_ROOT/run" 2>/dev/null || true
 
-    info "Writing in-chroot setup script..."
-
-    # Determine fstab entries
     local fstab_efi="" fstab_boot="" root_uuid=""
     if [[ "$SYS_FIRMWARE" == "uefi" && -n "$PART_EFI" ]]; then
-        local efi_uuid
-        efi_uuid=$(blkid -s UUID -o value "$PART_EFI")
+        local efi_uuid; efi_uuid=$(blkid -s UUID -o value "$PART_EFI")
         fstab_efi="UUID=${efi_uuid}  /boot/efi  vfat  defaults  0 2"
     fi
     if [[ -n "$PART_BOOT" ]]; then
-        local boot_uuid
-        boot_uuid=$(blkid -s UUID -o value "$PART_BOOT")
+        local boot_uuid; boot_uuid=$(blkid -s UUID -o value "$PART_BOOT")
         fstab_boot="UUID=${boot_uuid}  /boot  ext4  defaults,noatime  0 2"
     fi
-    if [[ "$FS_TYPE" != "zfs" ]]; then
-        root_uuid=$(blkid -s UUID -o value "$PART_ROOT")
-    fi
-    local swap_uuid
-    swap_uuid=$(blkid -s UUID -o value "$PART_SWAP")
+    [[ "$FS_TYPE" != "zfs" ]] && root_uuid=$(blkid -s UUID -o value "$PART_ROOT")
+    local swap_uuid; swap_uuid=$(blkid -s UUID -o value "$PART_SWAP")
 
     local grub_target
-    [[ "$SYS_FIRMWARE" == "uefi" ]] && grub_target="--target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Gentoo" \
-                                 || grub_target="--target=i386-pc $DISK"
+    [[ "$SYS_FIRMWARE" == "uefi" ]] \
+        && grub_target="--target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Gentoo" \
+        || grub_target="--target=i386-pc $DISK"
 
     local WAYLAND_BASE="sys-auth/seatd x11-terms/alacritty gui-apps/waybar gui-apps/wofi"
-
     local desktop_pkgs=""
     case "$DESKTOP" in
         kde)      desktop_pkgs="kde-plasma/plasma-meta kde-apps/kde-apps-meta x11-base/xorg-server" ;;
@@ -469,7 +415,6 @@ phase_chroot() {
         weston)   desktop_pkgs="gui-libs/weston x11-terms/alacritty sys-auth/seatd" ;;
     esac
 
-    # WMs use lightdm; Wayland compositors use greetd; big DEs have their own
     local dm_pkg="" dm_service=""
     case "$DESKTOP" in
         kde)   dm_pkg="x11-misc/sddm";  dm_service="sddm" ;;
@@ -480,6 +425,7 @@ phase_chroot() {
                dm_pkg="gui-apps/greetd gui-apps/greetd-tuigreet"; dm_service="greetd" ;;
     esac
 
+    info_box "Writing chroot setup script..."
     cat > "$MOUNT_ROOT/setup-chroot.sh" <<'CHROOT_SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -510,16 +456,12 @@ source /etc/profile 2>/dev/null || true
 
 echo "[chroot] Installing kernel sources..."
 emerge -q sys-kernel/gentoo-sources sys-kernel/linux-firmware
-
-# Make sure /usr/src/linux symlink exists before genkernel runs
 eselect kernel set 1
 
 if [[ "${FS_TYPE}" == "zfs" ]]; then
     echo "[chroot] Installing ZFS..."
     emerge -q sys-fs/zfs sys-fs/zfs-kmod
-    # Generate a hostid required by ZFS
     zgenhostid
-    # Enable ZFS services
     case "${INIT_SYSTEM}" in
         openrc)
             rc-update add zfs-import boot
@@ -529,41 +471,28 @@ if [[ "${FS_TYPE}" == "zfs" ]]; then
         systemd)
             systemctl enable zfs-import-cache zfs-import.target zfs-mount zfs-share zfs.target
             ;;
-        runit)
-            for svc in zfs-import zfs-mount; do
-                ln -sf /etc/sv/${svc} /etc/runit/runsvdir/default/${svc}
-            done
-            ;;
     esac
 fi
 
 if [[ "${KERNEL_METHOD}" == "genkernel" || "${FS_TYPE}" == "zfs" ]]; then
     emerge -q sys-kernel/genkernel
-    if [[ "${FS_TYPE}" == "zfs" ]]; then
-        genkernel --zfs all
-    else
-        genkernel all
-    fi
+    [[ "${FS_TYPE}" == "zfs" ]] && genkernel --zfs all || genkernel all
 elif [[ "${KERNEL_METHOD}" == "manual" ]]; then
-    echo "[chroot] Kernel sources ready at /usr/src/linux"
-    echo "[chroot] Run 'make menuconfig && make && make modules_install && make install' manually."
-    echo "[chroot] Continuing with the rest of installation..."
+    echo "[chroot] Kernel sources at /usr/src/linux — compile manually post-install."
 fi
 
 echo "[chroot] Writing fstab..."
 if [[ "${FS_TYPE}" == "zfs" ]]; then
     cat > /etc/fstab <<FSTAB
-# <fs>                 <mp>    <type>  <opts>          <dump> <pass>
-# ZFS datasets are managed by ZFS — root is mounted by the initramfs
-UUID=${swap_uuid}  none    swap    sw              0      0
+# ZFS datasets are mounted by the initramfs — no root entry needed
+UUID=${swap_uuid}  none  swap  sw  0 0
 ${fstab_boot}
 ${fstab_efi}
 FSTAB
 else
     cat > /etc/fstab <<FSTAB
-# <fs>                                  <mp>       <type>      <opts>            <dump> <pass>
-UUID=${root_uuid}  /          ${FS_TYPE}  defaults,noatime  0      1
-UUID=${swap_uuid}  none       swap        sw                0      0
+UUID=${root_uuid}  /     ${FS_TYPE}  defaults,noatime  0 1
+UUID=${swap_uuid}  none  swap        sw                0 0
 ${fstab_boot}
 ${fstab_efi}
 FSTAB
@@ -572,10 +501,11 @@ fi
 echo "[chroot] Setting hostname..."
 echo "${HOSTNAME}" > /etc/hostname
 
-echo "[chroot] Configuring network (dhcp on first ethernet)..."
+echo "[chroot] Configuring network..."
+emerge -q net-misc/dhcpcd
+
 case "${INIT_SYSTEM}" in
     openrc)
-        emerge -q net-misc/dhcpcd
         echo 'config_eth0="dhcp"' >> /etc/conf.d/net
         ln -sf /etc/init.d/net.lo /etc/init.d/net.eth0
         rc-update add net.eth0 default
@@ -592,20 +522,27 @@ DHCP=yes
 NET
         ;;
     runit)
-        emerge -q net-misc/dhcpcd
-        # runit uses /etc/runit/runsvdir/default symlinks
-        mkdir -p /etc/runit/runsvdir/default
-        ln -sf /etc/sv/dhcpcd /etc/runit/runsvdir/default/dhcpcd
+        # runit stage3 only ships agetty services — write run scripts manually
+        # Service repo: /etc/sv   Scan dir: /etc/service
+        mkdir -p /etc/sv/dhcpcd /etc/service
+        cat > /etc/sv/dhcpcd/run <<'RUN'
+#!/bin/sh
+exec dhcpcd -B -q
+RUN
+        chmod +x /etc/sv/dhcpcd/run
+        ln -sf /etc/sv/dhcpcd /etc/service/dhcpcd
         ;;
     s6)
-        emerge -q net-misc/dhcpcd
-        # s6-rc service bundles live in /etc/s6/adminsv; link into the default bundle
-        mkdir -p /etc/s6/adminsv/default/contents.d
+        mkdir -p /etc/s6/adminsv/dhcpcd /etc/s6/adminsv/default/contents.d
+        cat > /etc/s6/adminsv/dhcpcd/run <<'RUN'
+#!/bin/execlineb -P
+dhcpcd -B -q
+RUN
+        chmod +x /etc/s6/adminsv/dhcpcd/run
         ln -sf /etc/s6/adminsv/dhcpcd /etc/s6/adminsv/default/contents.d/dhcpcd
         ;;
     dinit)
         emerge -q net-misc/dhcpcd
-        # dinit services are in /etc/dinit.d; enable with dinitctl
         dinitctl enable dhcpcd
         ;;
 esac
@@ -626,9 +563,25 @@ case "${INIT_SYSTEM}" in
         systemctl enable cronie ntpd
         ;;
     runit)
-        mkdir -p /etc/runit/runsvdir/default
+        # Write run scripts for each service — stage3 doesn't ship them
         for svc in sysklogd cronie ntpd; do
-            ln -sf /etc/sv/${svc} /etc/runit/runsvdir/default/${svc}
+            mkdir -p /etc/sv/${svc}
+        done
+        cat > /etc/sv/sysklogd/run <<'RUN'
+#!/bin/sh
+exec syslogd -n
+RUN
+        cat > /etc/sv/cronie/run <<'RUN'
+#!/bin/sh
+exec crond -n
+RUN
+        cat > /etc/sv/ntpd/run <<'RUN'
+#!/bin/sh
+exec ntpd -n -g
+RUN
+        for svc in sysklogd cronie ntpd; do
+            chmod +x /etc/sv/${svc}/run
+            ln -sf /etc/sv/${svc} /etc/service/${svc}
         done
         ;;
     s6)
@@ -649,7 +602,6 @@ else
     echo "sys-boot/grub:2 grub_platforms_pc" >> /etc/portage/package.use/grub
 fi
 emerge -q sys-boot/grub
-
 grub-install ${grub_target}
 grub-mkconfig -o /boot/grub/grub.cfg
 
@@ -657,7 +609,6 @@ if [[ -n "${desktop_pkgs}" ]]; then
     echo "[chroot] Installing desktop environment (this will take a while)..."
 
     if [[ "${DESKTOP}" == "mangowm" ]]; then
-        echo "[chroot] Enabling GURU overlay for mangowm..."
         emerge -q app-eselect/eselect-repository dev-vcs/git
         eselect repository enable guru
         emerge --sync guru
@@ -667,13 +618,22 @@ if [[ -n "${desktop_pkgs}" ]]; then
     fi
 
     emerge -q ${desktop_pkgs} ${dm_pkg}
+
     if [[ -n "${dm_service}" ]]; then
         case "${INIT_SYSTEM}" in
             openrc)  rc-update add ${dm_service} default ;;
             systemd) systemctl enable ${dm_service} ;;
-            runit)   ln -sf /etc/sv/${dm_service} /etc/runit/runsvdir/default/${dm_service} ;;
-            s6)      ln -sf /etc/s6/adminsv/${dm_service} /etc/s6/adminsv/default/contents.d/${dm_service} ;;
-            dinit)   dinitctl enable ${dm_service} ;;
+            runit)
+                mkdir -p /etc/sv/${dm_service}
+                cat > /etc/sv/${dm_service}/run <<RUN
+#!/bin/sh
+exec ${dm_service}
+RUN
+                chmod +x /etc/sv/${dm_service}/run
+                ln -sf /etc/sv/${dm_service} /etc/service/${dm_service}
+                ;;
+            s6)    ln -sf /etc/s6/adminsv/${dm_service} /etc/s6/adminsv/default/contents.d/${dm_service} ;;
+            dinit) dinitctl enable ${dm_service} ;;
         esac
     fi
 fi
@@ -683,7 +643,7 @@ CHROOT_SCRIPT
 
     chmod +x "$MOUNT_ROOT/setup-chroot.sh"
 
-    info "Entering chroot..."
+    info_box "Entering chroot — this will take a while...\nDo not close this terminal."
     env -i \
         HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
         TERM=linux DEBUGINFOD_URLS="" DEBUGINFOD_IMA_CERT_PATH="" \
@@ -709,29 +669,29 @@ CHROOT_SCRIPT
         chroot "$MOUNT_ROOT" /bin/bash /setup-chroot.sh
 
     rm -f "$MOUNT_ROOT/setup-chroot.sh"
-    success "Chroot setup complete."
 }
 
 # ─── Phase 5: Cleanup ─────────────────────────────────────────────────────────
 phase_cleanup() {
-    info "Unmounting filesystems..."
-    umount -l "$MOUNT_ROOT/dev" 2>/dev/null || true
-    umount -l "$MOUNT_ROOT/sys" 2>/dev/null || true
+    info_box "Unmounting filesystems..."
+    umount -l "$MOUNT_ROOT/dev"  2>/dev/null || true
+    umount -l "$MOUNT_ROOT/sys"  2>/dev/null || true
     umount -l "$MOUNT_ROOT/proc" 2>/dev/null || true
-    umount -R "$MOUNT_ROOT" 2>/dev/null || true
+    umount -R "$MOUNT_ROOT"      2>/dev/null || true
     if [[ "$FS_TYPE" == "zfs" ]]; then
-        zfs unmount -a 2>/dev/null || true
+        zfs unmount -a  2>/dev/null || true
         zpool export rpool 2>/dev/null || true
     fi
     swapoff "$PART_SWAP" 2>/dev/null || true
-    success "Filesystems unmounted."
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 main() {
     collect_config
 
-    info "Starting installation. This will take 30–90+ minutes."
+    clear
+    echo "Starting installation — this will take 30–90+ minutes."
+    echo "Output will scroll below. Do not close this terminal."
     echo
 
     phase_disk
@@ -740,21 +700,12 @@ main() {
     phase_chroot
     phase_cleanup
 
-    echo
-    echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════╗${RESET}"
-    echo -e "${GREEN}${BOLD}║   Installation complete! Reboot to boot  ║${RESET}"
-    echo -e "${GREEN}${BOLD}║   into your new Gentoo system.            ║${RESET}"
-    echo -e "${GREEN}${BOLD}╚══════════════════════════════════════════╝${RESET}"
-    echo
+    local msg="Installation complete!\n\nReboot into your new Gentoo system."
     if [[ "$KERNEL_METHOD" == "manual" ]]; then
-        warn "You chose manual kernel. After reboot into the live env, chroot back in and:"
-        echo "  cd /usr/src/linux && make menuconfig && make && make modules_install && make install"
-        echo "  Then run: grub-mkconfig -o /boot/grub/grub.cfg"
+        msg+="\n\nManual kernel: chroot back in, compile at /usr/src/linux,\nthen run: grub-mkconfig -o /boot/grub/grub.cfg"
     fi
-    echo
-    prompt "Reboot now? [y/N]: "
-    read -r DO_REBOOT
-    [[ "$DO_REBOOT" =~ ^[Yy]$ ]] && reboot
+
+    d --title "Done!" --yesno "${msg}\n\nReboot now?" 16 58 && reboot
 }
 
 main "$@"
