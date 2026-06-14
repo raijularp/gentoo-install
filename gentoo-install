@@ -693,7 +693,6 @@ EMERGE_DEFAULT_OPTS="--jobs=${cpu_count} --load-average=${cpu_count}"
 
 USE="${use_flags}"
 
-GRUB_PLATFORMS="${SYS_FIRMWARE}"
 VIDEO_CARDS="intel amdgpu radeon nouveau"
 INPUT_DEVICES="libinput"
 
@@ -945,7 +944,7 @@ echo "[chroot] Setting root password..."
 echo "root:${ROOT_PASSWORD}" | chpasswd
 
 echo "[chroot] Creating user raiju..."
-useradd -m -G wheel,audio,video,input,usb -s /bin/bash raiju
+useradd -m -G wheel,audio,video,input -s /bin/bash raiju
 echo "raiju:${ROOT_PASSWORD}" | chpasswd
 emerge -q app-admin/doas
 echo "permit persist :wheel" > /etc/doas.conf
@@ -1071,13 +1070,13 @@ if [[ -n "${desktop_pkgs}" ]]; then
         echo "[chroot] Installing Noctalia Shell and dependencies..."
         emerge -q gui-apps/noctalia-shell \
             media-gfx/imagemagick \
-            app-misc/brightnessctl \
+            sys-power/brightnessctl \
             media-video/ffmpeg \
             dev-qt/qt6-multimedia \
-            dev-python/python-setuptools \
-            app-misc/wlr-randr \
-            app-misc/cliphist \
-            x11-misc/wlsunset
+            dev-python/setuptools \
+            gui-apps/wlr-randr \
+            gui-apps/cliphist \
+            gui-apps/wlsunset
     fi
 
     if [[ -n "${dm_service}" ]]; then
