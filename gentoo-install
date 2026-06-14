@@ -141,6 +141,30 @@ almost certainly want to customize it post-install.
 Are you sure you want dwm?" 10 56 || exit 0
     fi
 
+    # ── Audio ──
+    AUDIO="none"
+    if [[ "$DESKTOP" != "none" ]]; then
+        d --title "Audio" --menu "Choose an audio server:" 12 66 3 \
+            "pipewire"   "Modern — handles audio + video, replaces PulseAudio (recommended)" \
+            "pulseaudio" "Classic — rock solid, broadest app compatibility" \
+            "none"       "No audio server — configure manually later"
+        AUDIO=$(result)
+    fi
+
+    # ── Greeter ──
+    GREETER=""
+    if [[ "$DESKTOP" =~ ^(xfce|i3|openbox|bspwm|dwm)$ ]]; then
+        d --title "Greeter" --menu "Choose a LightDM greeter:" 10 66 2 \
+            "gtk"   "GTK greeter — simple and clean (default)" \
+            "slick" "Slick greeter — modern, user avatar support"
+        GREETER=$(result)
+    elif [[ "$DESKTOP" =~ ^(sway|hyprland|niri|river|wayfire|labwc|mangowm|weston)$ ]]; then
+        d --title "Greeter" --menu "Choose a greetd greeter:" 10 66 2 \
+            "tuigreet" "TUI greeter — terminal-based, fast" \
+            "gtkgreet" "GTK greeter — graphical, Wayland-native"
+        GREETER=$(result)
+    fi
+
     # ── Kernel ──
     d --title "Kernel Build" --menu "Choose kernel build method:" 10 64 2 \
         "genkernel" "Automated — recommended for most users" \
@@ -184,6 +208,8 @@ Are you sure you want dwm?" 10 56 || exit 0
   Filesystem:  $FS_TYPE
   Init system: $INIT_SYSTEM
   Desktop:     $DESKTOP
+  Audio:       ${AUDIO:-none}
+  Greeter:     ${GREETER:-n/a}
   Kernel:      $KERNEL_METHOD
   Timezone:    $TIMEZONE
   Hostname:    $HOSTNAME
@@ -332,8 +358,12 @@ phase_portage() {
     if [[ "$DESKTOP" =~ ^(sway|hyprland|niri|river|wayfire|labwc|mangowm|weston)$ ]]; then
         use_flags="wayland $use_flags"
     elif [[ "$DESKTOP" != "none" ]]; then
-        use_flags="X alsa pulseaudio $use_flags"
+        use_flags="X alsa $use_flags"
     fi
+    case "$AUDIO" in
+        pipewire)   use_flags="$use_flags pipewire" ;;
+        pulseaudio) use_flags="$use_flags pulseaudio" ;;
+    esac
     case "$DESKTOP" in
         kde)     use_flags="$use_flags kde plasma" ;;
         gnome)   use_flags="$use_flags gnome" ;;
@@ -420,9 +450,25 @@ phase_chroot() {
         kde)   dm_pkg="x11-misc/sddm";  dm_service="sddm" ;;
         gnome) dm_pkg="gnome-base/gdm"; dm_service="gdm" ;;
         xfce|i3|openbox|bspwm|dwm)
-               dm_pkg="x11-misc/lightdm x11-misc/lightdm-gtk-greeter"; dm_service="lightdm" ;;
+            case "$GREETER" in
+                slick) dm_pkg="x11-misc/lightdm x11-misc/lightdm-slick-greeter" ;;
+                *)     dm_pkg="x11-misc/lightdm x11-misc/lightdm-gtk-greeter" ;;
+            esac
+            dm_service="lightdm"
+            ;;
         sway|hyprland|niri|river|wayfire|labwc|mangowm|weston)
-               dm_pkg="gui-apps/greetd gui-apps/greetd-tuigreet"; dm_service="greetd" ;;
+            case "$GREETER" in
+                gtkgreet) dm_pkg="gui-apps/greetd gui-apps/gtkgreet" ;;
+                *)        dm_pkg="gui-apps/greetd gui-apps/greetd-tuigreet" ;;
+            esac
+            dm_service="greetd"
+            ;;
+    esac
+
+    local audio_pkgs=""
+    case "$AUDIO" in
+        pipewire)   audio_pkgs="media-video/pipewire media-sound/wireplumber" ;;
+        pulseaudio) audio_pkgs="media-sound/pulseaudio" ;;
     esac
 
     info_box "Writing chroot setup script..."
@@ -638,6 +684,34 @@ RUN
     fi
 fi
 
+if [[ -n "${audio_pkgs}" ]]; then
+    echo "[chroot] Installing audio server..."
+    emerge -q ${audio_pkgs}
+    if [[ "${AUDIO}" == "pipewire" ]]; then
+        # pipewire is user-session managed; create system-wide config dir
+        mkdir -p /etc/pipewire
+        cp /usr/share/pipewire/pipewire.conf /etc/pipewire/ 2>/dev/null || true
+    fi
+fi
+
+# Configure greeter if needed
+if [[ "${GREETER}" == "slick" ]]; then
+    mkdir -p /etc/lightdm
+    cat >> /etc/lightdm/lightdm.conf <<LCONF
+[Seat:*]
+greeter-session=lightdm-slick-greeter
+LCONF
+elif [[ "${GREETER}" == "gtkgreet" ]]; then
+    mkdir -p /etc/greetd
+    cat > /etc/greetd/config.toml <<GCONF
+[terminal]
+vt = 1
+[default_session]
+command = "gtkgreet"
+user = "greeter"
+GCONF
+fi
+
 echo "[chroot] Done!"
 CHROOT_SCRIPT
 
@@ -657,6 +731,8 @@ CHROOT_SCRIPT
         FS_TYPE="$FS_TYPE" \
         DISK="$DISK" \
         DESKTOP="$DESKTOP" \
+        AUDIO="$AUDIO" \
+        GREETER="$GREETER" \
         LIBC="$LIBC" \
         root_uuid="$root_uuid" \
         swap_uuid="$swap_uuid" \
@@ -666,6 +742,7 @@ CHROOT_SCRIPT
         desktop_pkgs="$desktop_pkgs" \
         dm_pkg="$dm_pkg" \
         dm_service="$dm_service" \
+        audio_pkgs="$audio_pkgs" \
         chroot "$MOUNT_ROOT" /bin/bash /setup-chroot.sh
 
     rm -f "$MOUNT_ROOT/setup-chroot.sh"
