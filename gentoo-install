@@ -19,8 +19,10 @@ command -v mkfs.ext4 &>/dev/null || { echo "e2fsprogs is required."; exit 1; }
 
 # ─── TUI helpers ──────────────────────────────────────────────────────────────
 # All dialog calls write their result to $TMP via stderr redirect
-d()      { dialog --backtitle "$BACKTITLE" "$@" 2>"$TMP"; }
+_DIALOG_EXIT=0
+d()      { dialog --backtitle "$BACKTITLE" "$@" 2>"$TMP"; _DIALOG_EXIT=$?; return 0; }
 result() { cat "$TMP"; }
+dialog_ok() { [[ $_DIALOG_EXIT -eq 0 ]]; }
 die()    { dialog --backtitle "$BACKTITLE" --title "Fatal Error" --msgbox "$*" 8 60; exit 1; }
 info_box() { dialog --backtitle "$BACKTITLE" --title "Installing..." --infobox "$*" 5 60; }
 
@@ -149,6 +151,7 @@ You still choose: disk, compositor, init, timezone, hostname, password." 22 60
   ALL DATA ON $DISK WILL BE DESTROYED.
 
 Proceed?" 24 50
+    dialog_ok || exit 0
 
     RAIJU_MODE=1
 }
@@ -409,7 +412,8 @@ modules built into the initramfs.
 
 genkernel will be used regardless of your kernel method choice.
 
-Continue with ZFS?" 10 60 || exit 0
+Continue with ZFS?" 10 60
+        dialog_ok || exit 0
     fi
 
     # ── Init system ──
@@ -431,7 +435,8 @@ Continue with ZFS?" 10 60 || exit 0
 in the Gentoo ecosystem. Some packages may not have dinit
 service files yet.
 
-Are you sure you want to use dinit?" 10 58 || exit 0
+Are you sure you want to use dinit?" 10 58
+        dialog_ok || exit 0
     fi
 
     # ── Desktop / WM / Compositor ──
@@ -461,7 +466,8 @@ Are you sure you want to use dinit?" 10 58 || exit 0
 The ebuild installs a stock unpatched build — you will
 almost certainly want to customize it post-install.
 
-Are you sure you want dwm?" 10 56 || exit 0
+Are you sure you want dwm?" 10 56
+        dialog_ok || exit 0
     fi
 
     # ── Audio ──
@@ -575,6 +581,7 @@ Requires genkernel (forced on)." 12 62
   ALL DATA ON $DISK WILL BE DESTROYED.
 
 Proceed with installation?" 22 52
+    dialog_ok || exit 0
 }
 
 # ─── Phase 1: Disk ────────────────────────────────────────────────────────────
@@ -1378,7 +1385,8 @@ main() {
         msg+="\n\nManual kernel: chroot back in, compile at /usr/src/linux,\nthen run: grub-mkconfig -o /boot/grub/grub.cfg"
     fi
 
-    d --title "Done!" --yesno "${msg}\n\nReboot now?" 16 58 && reboot
+    d --title "Done!" --yesno "${msg}\n\nReboot now?" 16 58
+    dialog_ok && reboot
 }
 
 main "$@"
