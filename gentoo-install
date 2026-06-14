@@ -474,13 +474,29 @@ Example: -pulseaudio nls offensive" \
 
     # ── Bootloader ──
     if [[ "$SYS_FIRMWARE" == "uefi" ]]; then
-        d --title "Bootloader" --menu "Choose a bootloader:" 12 68 3 \
+        d --title "Bootloader" --menu "Choose a bootloader:" 16 72 5 \
             "grub"         "GRUB — universal, supports all setups (recommended)" \
-            "systemd-boot" "systemd-boot — minimal, UEFI only, fast" \
-            "refind"       "rEFInd — graphical, auto-detects kernels, UEFI only"
+            "systemd-boot" "systemd-boot — minimal, fast, UEFI only" \
+            "refind"       "rEFInd — graphical, auto-detects kernels, UEFI only" \
+            "limine"       "Limine — modern, minimal config, UEFI + BIOS" \
+            "uki"          "UKI — single .efi image, no bootloader needed, UEFI only"
         BOOTLOADER=$(result)
+        if [[ "$BOOTLOADER" == "uki" ]]; then
+            d --title "UKI Info" --msgbox \
+"Unified Kernel Image (UKI) bundles the kernel, initramfs, and
+kernel cmdline into a single signed .efi file.
+
+It is booted directly by the EFI firmware — no bootloader layer.
+efibootmgr will register it as the default boot entry.
+
+Requires genkernel (forced on)." 12 62
+            KERNEL_METHOD="genkernel"
+        fi
     else
-        BOOTLOADER="grub"
+        d --title "Bootloader" --menu "Choose a bootloader:" 10 68 2 \
+            "grub"   "GRUB — standard, well-tested (recommended)" \
+            "limine" "Limine — modern, minimal config"
+        BOOTLOADER=$(result)
     fi
 
     # ── Kernel ──
@@ -1063,6 +1079,18 @@ if [[ "${FS_TYPE}" == "btrfs" ]]; then
 fi
 
 echo "[chroot] Installing bootloader (${BOOTLOADER})..."
+
+# Build root options string used by several bootloaders
+_root_opts="root=UUID=${root_uuid} rw quiet"
+[[ "${FS_TYPE}" == "btrfs" ]] && _root_opts="${_root_opts} rootflags=subvol=@"
+[[ "${FS_TYPE}" == "zfs"   ]] && _root_opts="root=ZFS=rpool/root rw"
+
+# Locate kernel + initramfs written by genkernel (used by several bootloaders)
+_kern=$(ls /boot/vmlinuz-* 2>/dev/null | sort -V | tail -1)
+_init=$(ls /boot/initramfs-* 2>/dev/null | sort -V | tail -1)
+_kern_rel="${_kern#/boot/}"
+_init_rel="${_init#/boot/}"
+
 case "${BOOTLOADER}" in
     grub)
         mkdir -p /etc/portage/package.use
@@ -1075,6 +1103,7 @@ case "${BOOTLOADER}" in
         grub-install ${grub_target}
         grub-mkconfig -o /boot/grub/grub.cfg
         ;;
+
     systemd-boot)
         emerge -q sys-apps/systemd-utils
         bootctl install --esp-path=/boot/efi
@@ -1085,27 +1114,58 @@ timeout 4
 console-mode max
 editor no
 LDRCONF
-        # Find kernel + initramfs written by genkernel
-        KERN=$(ls /boot/vmlinuz-* 2>/dev/null | sort -V | tail -1 | sed 's|/boot/||')
-        INIT=$(ls /boot/initramfs-* 2>/dev/null | sort -V | tail -1 | sed 's|/boot/||')
-        ROOT_OPTS="root=UUID=${root_uuid} rw quiet"
-        [[ "${FS_TYPE}" == "btrfs" ]] && ROOT_OPTS="${ROOT_OPTS} rootflags=subvol=@"
-        [[ "${FS_TYPE}" == "zfs"   ]] && ROOT_OPTS="root=ZFS=rpool/root rw"
         cat > /boot/efi/loader/entries/gentoo.conf <<ENTRY
 title   Gentoo Linux
-linux   /${KERN}
-initrd  /${INIT}
-options ${ROOT_OPTS}
+linux   /${_kern_rel}
+initrd  /${_init_rel}
+options ${_root_opts}
 ENTRY
         ;;
+
     refind)
         emerge -q sys-boot/refind
         refind-install
-        # rEFInd auto-detects kernels; write a minimal refind_linux.conf hint
-        ROOT_OPTS="root=UUID=${root_uuid} rw quiet"
-        [[ "${FS_TYPE}" == "btrfs" ]] && ROOT_OPTS="${ROOT_OPTS} rootflags=subvol=@"
-        [[ "${FS_TYPE}" == "zfs"   ]] && ROOT_OPTS="root=ZFS=rpool/root rw"
-        echo "\"Boot\" \"${ROOT_OPTS}\"" > /boot/refind_linux.conf
+        echo "\"Boot\" \"${_root_opts}\"" > /boot/refind_linux.conf
+        ;;
+
+    limine)
+        emerge -q sys-boot/limine
+        mkdir -p /boot/limine
+        cat > /boot/limine/limine.conf <<LIMCFG
+timeout: 5
+
+/Gentoo Linux
+    protocol: linux
+    kernel_path: boot():/vmlinuz-${_kern_rel#vmlinuz-}
+    module_path: boot():/initramfs-${_init_rel#initramfs-}
+    cmdline: ${_root_opts}
+LIMCFG
+        if [[ "${SYS_FIRMWARE}" == "uefi" ]]; then
+            mkdir -p /boot/efi/EFI/LIMINE
+            cp /usr/share/limine/BOOTX64.EFI /boot/efi/EFI/LIMINE/
+            cp /usr/share/limine/limine.sys  /boot/limine/ 2>/dev/null || true
+        else
+            limine bios-install "${DISK}"
+            cp /usr/share/limine/limine.sys /boot/limine/
+        fi
+        ;;
+
+    uki)
+        # Unified Kernel Image — single .efi, booted directly by firmware
+        mkdir -p /etc/portage/package.use
+        echo "sys-apps/systemd-utils boot" >> /etc/portage/package.use/systemd-utils
+        emerge -q sys-apps/systemd-utils sys-boot/efibootmgr
+        mkdir -p /boot/efi/EFI/Linux
+        ukify build \
+            --linux="${_kern}" \
+            --initrd="${_init}" \
+            --cmdline="${_root_opts}" \
+            --output=/boot/efi/EFI/Linux/gentoo.efi
+        # Register as default EFI boot entry
+        _esp_dev=$(findmnt -no SOURCE /boot/efi)
+        _esp_part_num=$(cat /sys/class/block/${_esp_dev##*/}/partition 2>/dev/null || echo 1)
+        efibootmgr -c -d "${DISK}" -p "${_esp_part_num}" \
+            -l '\EFI\Linux\gentoo.efi' -L "Gentoo Linux"
         ;;
 esac
 
