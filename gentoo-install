@@ -38,7 +38,7 @@ pick_timezone() {
 
     d --title "Timezone — Region" --menu "Select your region:" 24 50 16 "${region_args[@]}"
     local region; region=$(result)
-    [[ -z "$region" ]] && { TIMEZONE="UTC"; return; }
+    if [[ -z "$region" ]]; then TIMEZONE="UTC"; return; fi
 
     if [[ -d "$zoneroot/$region" ]]; then
         # Step 2 — city (flattened, handles sub-dirs like America/Indiana/Indianapolis)
@@ -49,7 +49,7 @@ pick_timezone() {
 
         d --title "Timezone — $region" --menu "Select your city:" 24 56 16 "${city_args[@]}"
         local city; city=$(result)
-        [[ -z "$city" ]] && { TIMEZONE="UTC"; return; }
+        if [[ -z "$city" ]]; then TIMEZONE="UTC"; return; fi
         TIMEZONE="$region/$city"
     else
         TIMEZONE="$region"
@@ -640,9 +640,10 @@ phase_disk() {
     esac
 
     info_box "Formatting partitions..."
-    [[ -n "$PART_EFI"  ]] && mkfs.vfat -F32 "$PART_EFI"
-    [[ -n "$PART_BOOT" ]] && mkfs.ext4 -F -L boot "$PART_BOOT"
-    mkswap "$PART_SWAP" && swapon "$PART_SWAP"
+    if [[ -n "$PART_EFI"  ]]; then mkfs.vfat -F32 "$PART_EFI"; fi
+    if [[ -n "$PART_BOOT" ]]; then mkfs.ext4 -F -L boot "$PART_BOOT"; fi
+    mkswap "$PART_SWAP"
+    swapon "$PART_SWAP"
 
     case "$FS_TYPE" in
         ext4)  mkfs.ext4  -F -L root "$PART_ROOT" ;;
@@ -685,8 +686,14 @@ phase_disk() {
     else
         mount "$PART_ROOT" "$MOUNT_ROOT"
     fi
-    [[ -n "$PART_BOOT" ]] && { mkdir -p "$MOUNT_ROOT/boot"; mount "$PART_BOOT" "$MOUNT_ROOT/boot"; }
-    [[ -n "$PART_EFI"  ]] && { mkdir -p "$MOUNT_ROOT/boot/efi"; mount "$PART_EFI" "$MOUNT_ROOT/boot/efi"; }
+    if [[ -n "$PART_BOOT" ]]; then
+        mkdir -p "$MOUNT_ROOT/boot"
+        mount "$PART_BOOT" "$MOUNT_ROOT/boot"
+    fi
+    if [[ -n "$PART_EFI" ]]; then
+        mkdir -p "$MOUNT_ROOT/boot/efi"
+        mount "$PART_EFI" "$MOUNT_ROOT/boot/efi"
+    fi
 }
 
 # ─── Phase 2: Stage3 ──────────────────────────────────────────────────────────
@@ -801,7 +808,7 @@ phase_chroot() {
         local boot_uuid; boot_uuid=$(blkid -s UUID -o value "$PART_BOOT")
         fstab_boot="UUID=${boot_uuid}  /boot  ext4  defaults,noatime  0 2"
     fi
-    [[ "$FS_TYPE" != "zfs" ]] && root_uuid=$(blkid -s UUID -o value "$PART_ROOT")
+    if [[ "$FS_TYPE" != "zfs" ]]; then root_uuid=$(blkid -s UUID -o value "$PART_ROOT"); fi
     local swap_uuid; swap_uuid=$(blkid -s UUID -o value "$PART_SWAP")
 
     local grub_target
@@ -876,7 +883,7 @@ fi
 echo "[chroot] Setting timezone..."
 # Case-insensitive match against actual zoneinfo files
 _tz_match=$(find /usr/share/zoneinfo -type f | sed 's|/usr/share/zoneinfo/||' | grep -ix "${TIMEZONE}" | head -1)
-[[ -n "$_tz_match" ]] && TIMEZONE="$_tz_match"
+if [[ -n "$_tz_match" ]]; then TIMEZONE="$_tz_match"; fi
 echo "${TIMEZONE}" > /etc/timezone
 emerge --config sys-libs/timezone-data
 
@@ -1122,8 +1129,8 @@ echo "[chroot] Installing bootloader (${BOOTLOADER})..."
 
 # Build root options string used by several bootloaders
 _root_opts="root=UUID=${root_uuid} rw quiet"
-[[ "${FS_TYPE}" == "btrfs" ]] && _root_opts="${_root_opts} rootflags=subvol=@"
-[[ "${FS_TYPE}" == "zfs"   ]] && _root_opts="root=ZFS=rpool/root rw"
+if [[ "${FS_TYPE}" == "btrfs" ]]; then _root_opts="${_root_opts} rootflags=subvol=@"; fi
+if [[ "${FS_TYPE}" == "zfs"   ]]; then _root_opts="root=ZFS=rpool/root rw"; fi
 
 # Locate kernel + initramfs written by genkernel (used by several bootloaders)
 _kern=$(ls /boot/vmlinuz-* 2>/dev/null | sort -V | tail -1)
@@ -1384,7 +1391,7 @@ main() {
     phase_stage3
     phase_portage
     phase_chroot
-    [[ "${RAIJU_MODE:-0}" == "1" ]] && phase_raiju_dotfiles
+    if [[ "${RAIJU_MODE:-0}" == "1" ]]; then phase_raiju_dotfiles; fi
     phase_cleanup
 
     local msg="Installation complete!\n\nReboot into your new Gentoo system."
