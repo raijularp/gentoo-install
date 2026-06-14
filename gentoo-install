@@ -24,6 +24,36 @@ result() { cat "$TMP"; }
 die()    { dialog --backtitle "$BACKTITLE" --title "Fatal Error" --msgbox "$*" 8 60; exit 1; }
 info_box() { dialog --backtitle "$BACKTITLE" --title "Installing..." --infobox "$*" 5 60; }
 
+# ─── Timezone picker ──────────────────────────────────────────────────────────
+pick_timezone() {
+    local zoneroot="/usr/share/zoneinfo"
+
+    # Step 1 — region
+    local region_args=()
+    while IFS= read -r r; do
+        region_args+=("$r" "")
+    done < <(ls "$zoneroot" | grep -E '^[A-Z]' | grep -v '^posix$' | grep -v '^right$' | sort)
+
+    d --title "Timezone — Region" --menu "Select your region:" 24 50 16 "${region_args[@]}"
+    local region; region=$(result)
+    [[ -z "$region" ]] && { TIMEZONE="UTC"; return; }
+
+    if [[ -d "$zoneroot/$region" ]]; then
+        # Step 2 — city (flattened, handles sub-dirs like America/Indiana/Indianapolis)
+        local city_args=()
+        while IFS= read -r c; do
+            city_args+=("$c" "")
+        done < <(find "$zoneroot/$region" -type f | sed "s|$zoneroot/$region/||" | sort)
+
+        d --title "Timezone — $region" --menu "Select your city:" 24 56 16 "${city_args[@]}"
+        local city; city=$(result)
+        [[ -z "$city" ]] && { TIMEZONE="UTC"; return; }
+        TIMEZONE="$region/$city"
+    else
+        TIMEZONE="$region"
+    fi
+}
+
 # ─── Configuration ────────────────────────────────────────────────────────────
 # ─── Raiju mode ───────────────────────────────────────────────────────────────
 collect_raiju_config() {
@@ -79,10 +109,7 @@ You still choose: disk, compositor, init, timezone, hostname, password." 22 60
     INIT_SYSTEM=$(result)
 
     # ── Timezone ──
-    d --title "Timezone" --inputbox \
-"Enter your timezone:\n(e.g. America/New_York, Europe/Berlin)" \
-9 56 "UTC"
-    TIMEZONE=$(result); [[ -n "$TIMEZONE" ]] || TIMEZONE="UTC"
+    pick_timezone
 
     # ── Hostname ──
     d --title "Hostname" --inputbox "Enter hostname:" 8 50 "raiju"
@@ -506,11 +533,7 @@ Requires genkernel (forced on)." 12 62
     KERNEL_METHOD=$(result)
 
     # ── Timezone ──
-    d --title "Timezone" --inputbox \
-"Enter your timezone:\n(e.g. America/New_York, Europe/Berlin, Asia/Tokyo)" \
-9 56 "UTC"
-    TIMEZONE=$(result)
-    [[ -n "$TIMEZONE" ]] || TIMEZONE="UTC"
+    pick_timezone
 
     # ── Locale ──
     d --title "Locale" --inputbox "Enter your locale:" 8 50 "en_US.UTF-8"
