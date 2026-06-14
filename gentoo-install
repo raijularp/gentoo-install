@@ -571,12 +571,11 @@ phase_disk() {
         ext4)  mkfs.ext4  -F -L root "$PART_ROOT" ;;
         btrfs)
             mkfs.btrfs -f -L root "$PART_ROOT"
-            # Create subvolumes for snapper layout
             mount "$PART_ROOT" "$MOUNT_ROOT"
             btrfs subvolume create "$MOUNT_ROOT/@"
             btrfs subvolume create "$MOUNT_ROOT/@home"
-            btrfs subvolume create "$MOUNT_ROOT/@snapshots"
             btrfs subvolume create "$MOUNT_ROOT/@var_log"
+            # @snapshots is NOT pre-created — snapper create-config makes it
             umount "$MOUNT_ROOT"
             ;;
         xfs)   mkfs.xfs   -f -L root "$PART_ROOT" ;;
@@ -603,10 +602,9 @@ phase_disk() {
         zfs mount rpool/log
     elif [[ "$FS_TYPE" == "btrfs" ]]; then
         mount -o compress=zstd,noatime,subvol=@ "$PART_ROOT" "$MOUNT_ROOT"
-        mkdir -p "$MOUNT_ROOT"/{home,.snapshots,var/log}
-        mount -o compress=zstd,noatime,subvol=@home      "$PART_ROOT" "$MOUNT_ROOT/home"
-        mount -o compress=zstd,noatime,subvol=@snapshots "$PART_ROOT" "$MOUNT_ROOT/.snapshots"
-        mount -o compress=zstd,noatime,subvol=@var_log   "$PART_ROOT" "$MOUNT_ROOT/var/log"
+        mkdir -p "$MOUNT_ROOT"/{home,var/log}
+        mount -o compress=zstd,noatime,subvol=@home    "$PART_ROOT" "$MOUNT_ROOT/home"
+        mount -o compress=zstd,noatime,subvol=@var_log "$PART_ROOT" "$MOUNT_ROOT/var/log"
     else
         mount "$PART_ROOT" "$MOUNT_ROOT"
     fi
@@ -871,11 +869,10 @@ ${fstab_efi}
 FSTAB
 elif [[ "${FS_TYPE}" == "btrfs" ]]; then
     cat > /etc/fstab <<FSTAB
-UUID=${root_uuid}  /            btrfs  compress=zstd,noatime,subvol=@           0 0
-UUID=${root_uuid}  /home        btrfs  compress=zstd,noatime,subvol=@home       0 0
-UUID=${root_uuid}  /.snapshots  btrfs  compress=zstd,noatime,subvol=@snapshots  0 0
-UUID=${root_uuid}  /var/log     btrfs  compress=zstd,noatime,subvol=@var_log    0 0
-UUID=${swap_uuid}  none         swap   sw                                        0 0
+UUID=${root_uuid}  /         btrfs  compress=zstd,noatime,subvol=@        0 0
+UUID=${root_uuid}  /home     btrfs  compress=zstd,noatime,subvol=@home    0 0
+UUID=${root_uuid}  /var/log  btrfs  compress=zstd,noatime,subvol=@var_log 0 0
+UUID=${swap_uuid}  none      swap   sw                                     0 0
 ${fstab_boot}
 ${fstab_efi}
 FSTAB
@@ -1025,14 +1022,17 @@ esac
 if [[ "${FS_TYPE}" == "btrfs" ]]; then
     echo "[chroot] Installing snapper..."
     emerge -q app-backup/snapper
-    # Create snapper config for root subvolume
+    # snapper creates its own .snapshots subvolume — don't pre-create it
     snapper --no-dbus -c root create-config /
-    # Set snapshot limits to keep things sane
+    # Set snapshot limits
     sed -i 's/^TIMELINE_LIMIT_HOURLY=.*/TIMELINE_LIMIT_HOURLY="5"/'   /etc/snapper/configs/root
     sed -i 's/^TIMELINE_LIMIT_DAILY=.*/TIMELINE_LIMIT_DAILY="7"/'     /etc/snapper/configs/root
     sed -i 's/^TIMELINE_LIMIT_WEEKLY=.*/TIMELINE_LIMIT_WEEKLY="4"/'   /etc/snapper/configs/root
     sed -i 's/^TIMELINE_LIMIT_MONTHLY=.*/TIMELINE_LIMIT_MONTHLY="6"/' /etc/snapper/configs/root
     sed -i 's/^TIMELINE_LIMIT_YEARLY=.*/TIMELINE_LIMIT_YEARLY="2"/'   /etc/snapper/configs/root
+    # Add .snapshots to fstab now that snapper has created the subvolume
+    snap_uuid=$(findmnt -no UUID /)
+    echo "UUID=${snap_uuid}  /.snapshots  btrfs  compress=zstd,noatime,subvol=@/.snapshots  0 0" >> /etc/fstab
     case "${INIT_SYSTEM}" in
         openrc)  rc-update add snapper-timeline default; rc-update add snapper-cleanup default ;;
         systemd) systemctl enable snapper-timeline.timer snapper-cleanup.timer ;;
