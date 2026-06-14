@@ -642,6 +642,12 @@ case "${INIT_SYSTEM}" in
 esac
 
 echo "[chroot] Installing GRUB..."
+mkdir -p /etc/portage/package.use
+if [[ "${SYS_FIRMWARE}" == "uefi" ]]; then
+    echo "sys-boot/grub:2 grub_platforms_efi-64" >> /etc/portage/package.use/grub
+else
+    echo "sys-boot/grub:2 grub_platforms_pc" >> /etc/portage/package.use/grub
+fi
 emerge -q sys-boot/grub
 
 grub-install ${grub_target}
