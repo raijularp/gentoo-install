@@ -837,6 +837,9 @@ else
 fi
 
 echo "[chroot] Setting timezone..."
+# Case-insensitive match against actual zoneinfo files
+_tz_match=$(find /usr/share/zoneinfo -type f | sed 's|/usr/share/zoneinfo/||' | grep -ix "${TIMEZONE}" | head -1)
+[[ -n "$_tz_match" ]] && TIMEZONE="$_tz_match"
 echo "${TIMEZONE}" > /etc/timezone
 emerge --config sys-libs/timezone-data
 
