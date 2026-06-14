@@ -34,14 +34,15 @@ This is a personal preset for raiju — not for general use.
 
 Preset:
   Compositor:  niri  OR  mangowm  (your choice)
+  Init:        your choice
   Shell:       Noctalia Shell (via GURU overlay)
   Audio:       PipeWire + WirePlumber (autostarted)
-  Init:        OpenRC
+  Greeter:     ly (TUI display manager)
   libc:        glibc
-  Filesystem:  ext4
+  Filesystem:  btrfs + snapper
   Kernel:      genkernel
 
-You still choose: disk, compositor, timezone, hostname, password." 20 60
+You still choose: disk, compositor, init, timezone, hostname, password." 22 60
 
     # ── Disk ──
     local disk_args=()
@@ -68,6 +69,15 @@ You still choose: disk, compositor, timezone, hostname, password." 20 60
         "mangowm" "Mangowm — minimalist dwl-based"
     RAIJU_COMPOSITOR=$(result)
 
+    # ── Init system ──
+    d --title "Raiju — Init System" --menu "Choose your init system:" 16 72 5 \
+        "openrc"  "OpenRC — lightweight, script-based (recommended)" \
+        "systemd" "systemd — full featured, journald, socket activation" \
+        "runit"   "runit — supervision-based, very fast boot" \
+        "s6"      "s6 — skarnet supervision suite, low overhead" \
+        "dinit"   "becareful — experimental, not recommended"
+    INIT_SYSTEM=$(result)
+
     # ── Timezone ──
     d --title "Timezone" --inputbox \
 "Enter your timezone:\n(e.g. America/New_York, Europe/Berlin)" \
@@ -88,12 +98,11 @@ You still choose: disk, compositor, timezone, hostname, password." 20 60
 
     # Set fixed preset values
     LIBC="glibc"
-    FS_TYPE="ext4"
-    INIT_SYSTEM="openrc"
+    FS_TYPE="btrfs"
     KERNEL_METHOD="genkernel"
     LOCALE="en_US.UTF-8"
     AUDIO="pipewire"
-    GREETER="tuigreet"
+    GREETER="ly"
     DESKTOP="$RAIJU_COMPOSITOR"
 
     d --title "Raiju — Confirm" --yesno \
@@ -103,21 +112,22 @@ You still choose: disk, compositor, timezone, hostname, password." 20 60
   Firmware:    $SYS_FIRMWARE
   Compositor:  $RAIJU_COMPOSITOR + Noctalia Shell
   Audio:       PipeWire (autostarted)
-  Init:        OpenRC
-  Filesystem:  ext4
+  Init:        $INIT_SYSTEM
+  Filesystem:  btrfs + snapper
   Timezone:    $TIMEZONE
   Hostname:    $HOSTNAME
 ──────────────────────────────────
   ALL DATA ON $DISK WILL BE DESTROYED.
 
-Proceed?" 22 50
+Proceed?" 24 50
 
     RAIJU_MODE=1
 }
 
 # Writes noctalia + compositor dotfiles for raiju's user (root for now, adjust post-install)
 phase_raiju_dotfiles() {
-    local home="$MOUNT_ROOT/root"
+    local home="$MOUNT_ROOT/home/raiju"
+    mkdir -p "$home"
 
     if [[ "$RAIJU_COMPOSITOR" == "niri" ]]; then
         mkdir -p "$home/.config/niri"
@@ -160,30 +170,60 @@ spawn-at-startup "qs" "-c" "noctalia-shell"
 spawn-at-startup "pipewire"
 spawn-at-startup "wireplumber"
 
-// Keybinds
 binds {
-    Mod+Return { spawn "alacritty"; }
-    Mod+d      { spawn "wofi" "--show" "run"; }
-    Mod+q      { close-window; }
-    Mod+h      { focus-column-left; }
-    Mod+l      { focus-column-right; }
-    Mod+j      { focus-window-down; }
-    Mod+k      { focus-window-up; }
-    Mod+Shift+h { move-column-left; }
-    Mod+Shift+l { move-column-right; }
-    Mod+1 { focus-workspace 1; }
-    Mod+2 { focus-workspace 2; }
-    Mod+3 { focus-workspace 3; }
-    Mod+4 { focus-workspace 4; }
-    Mod+5 { focus-workspace 5; }
-    Mod+Shift+1 { move-window-to-workspace 1; }
-    Mod+Shift+2 { move-window-to-workspace 2; }
-    Mod+Shift+3 { move-window-to-workspace 3; }
-    Mod+Shift+4 { move-window-to-workspace 4; }
-    Mod+Shift+5 { move-window-to-workspace 5; }
-    Mod+f { maximize-column; }
-    Mod+Shift+f { fullscreen-window; }
-    Mod+Shift+e { quit; }
+    // ── Noctalia Shell IPC ──────────────────────────────────────────────────
+    Alt+P           { spawn "qs" "-c" "noctalia-shell" "ipc" "call" "launcher toggle"; }
+    Alt+S           { spawn "qs" "-c" "noctalia-shell" "ipc" "call" "controlCenter toggle"; }
+    Alt+Shift+S     { spawn "qs" "-c" "noctalia-shell" "ipc" "call" "settings toggle"; }
+    Alt+Shift+P     { spawn "qs" "-c" "noctalia-shell" "ipc" "call" "sessionMenu toggle"; }
+    Alt+N           { spawn "qs" "-c" "noctalia-shell" "ipc" "call" "notifications toggle"; }
+
+    // ── Apps ────────────────────────────────────────────────────────────────
+    Alt+Return      { spawn "alacritty"; }
+    Alt+B           { spawn "firefox"; }
+
+    // ── Window management ───────────────────────────────────────────────────
+    Alt+Q           { close-window; }
+    Alt+T           { toggle-window-floating; }
+    Alt+F           { maximize-column; }
+    Alt+Shift+F     { fullscreen-window; }
+    Alt+Shift+E     { quit; }
+
+    // ── Focus ───────────────────────────────────────────────────────────────
+    Alt+H           { focus-column-left; }
+    Alt+L           { focus-column-right; }
+    Alt+J           { focus-window-down; }
+    Alt+K           { focus-window-up; }
+
+    // ── Move ────────────────────────────────────────────────────────────────
+    Alt+Shift+H     { move-column-left; }
+    Alt+Shift+L     { move-column-right; }
+    Alt+Shift+J     { move-window-down; }
+    Alt+Shift+K     { move-window-up; }
+
+    // ── Workspaces ──────────────────────────────────────────────────────────
+    Alt+1 { focus-workspace 1; }
+    Alt+2 { focus-workspace 2; }
+    Alt+3 { focus-workspace 3; }
+    Alt+4 { focus-workspace 4; }
+    Alt+5 { focus-workspace 5; }
+    Alt+Shift+1 { move-column-to-workspace 1; }
+    Alt+Shift+2 { move-column-to-workspace 2; }
+    Alt+Shift+3 { move-column-to-workspace 3; }
+    Alt+Shift+4 { move-column-to-workspace 4; }
+    Alt+Shift+5 { move-column-to-workspace 5; }
+
+    // ── Screenshots ─────────────────────────────────────────────────────────
+    Print             { screenshot; }
+    Ctrl+Print        { screenshot-screen; }
+    Ctrl+Shift+Print  { screenshot-window; }
+
+    // ── Media / hardware keys ────────────────────────────────────────────────
+    XF86AudioRaiseVolume  allow-when-locked=true { spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "5%+"; }
+    XF86AudioLowerVolume  allow-when-locked=true { spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "5%-"; }
+    XF86AudioMute         allow-when-locked=true { spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SINK@" "toggle"; }
+    XF86MonBrightnessUp   { spawn "brightnessctl" "set" "+10%"; }
+    XF86MonBrightnessDown { spawn "brightnessctl" "set" "10%-"; }
 }
 NIRI
 
@@ -210,28 +250,62 @@ kb_layout=us
 natural_scroll=false
 tap_to_click=true
 
-# Keybinds (Mod = Super)
-bind=SUPER,Return,exec,alacritty
-bind=SUPER,d,exec,wofi --show run
-bind=SUPER,q,killactive
-bind=SUPER,h,movefocus,l
-bind=SUPER,l,movefocus,r
-bind=SUPER,j,movefocus,d
-bind=SUPER,k,movefocus,u
-bind=SUPER,1,workspace,1
-bind=SUPER,2,workspace,2
-bind=SUPER,3,workspace,3
-bind=SUPER,4,workspace,4
-bind=SUPER,5,workspace,5
-bind=SUPER SHIFT,1,movetoworkspace,1
-bind=SUPER SHIFT,2,movetoworkspace,2
-bind=SUPER SHIFT,3,movetoworkspace,3
-bind=SUPER SHIFT,4,movetoworkspace,4
-bind=SUPER SHIFT,5,movetoworkspace,5
-bind=SUPER,f,fullscreen
-bind=SUPER SHIFT,e,exit
+# ── Noctalia Shell IPC ──────────────────────────────────────────────────────
+bind=ALT,p,exec,qs -c noctalia-shell ipc call "launcher toggle"
+bind=ALT,s,exec,qs -c noctalia-shell ipc call "controlCenter toggle"
+bind=ALT SHIFT,s,exec,qs -c noctalia-shell ipc call "settings toggle"
+bind=ALT SHIFT,p,exec,qs -c noctalia-shell ipc call "sessionMenu toggle"
+bind=ALT,n,exec,qs -c noctalia-shell ipc call "notifications toggle"
+
+# ── Apps ────────────────────────────────────────────────────────────────────
+bind=ALT,Return,exec,alacritty
+bind=ALT,b,exec,firefox
+
+# ── Window management ────────────────────────────────────────────────────────
+bind=ALT,q,killactive
+bind=ALT,t,togglefloating
+bind=ALT,f,fullscreen
+bind=ALT SHIFT,e,exit
+
+# ── Focus ────────────────────────────────────────────────────────────────────
+bind=ALT,h,movefocus,l
+bind=ALT,l,movefocus,r
+bind=ALT,j,movefocus,d
+bind=ALT,k,movefocus,u
+
+# ── Move windows ─────────────────────────────────────────────────────────────
+bind=ALT SHIFT,h,movewindow,l
+bind=ALT SHIFT,l,movewindow,r
+bind=ALT SHIFT,j,movewindow,d
+bind=ALT SHIFT,k,movewindow,u
+
+# ── Workspaces ───────────────────────────────────────────────────────────────
+bind=ALT,1,workspace,1
+bind=ALT,2,workspace,2
+bind=ALT,3,workspace,3
+bind=ALT,4,workspace,4
+bind=ALT,5,workspace,5
+bind=ALT SHIFT,1,movetoworkspace,1
+bind=ALT SHIFT,2,movetoworkspace,2
+bind=ALT SHIFT,3,movetoworkspace,3
+bind=ALT SHIFT,4,movetoworkspace,4
+bind=ALT SHIFT,5,movetoworkspace,5
+
+# ── Media / hardware keys ────────────────────────────────────────────────────
+bind=,XF86AudioRaiseVolume,exec,wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+
+bind=,XF86AudioLowerVolume,exec,wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+bind=,XF86AudioMute,exec,wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+bind=,XF86MonBrightnessUp,exec,brightnessctl set +10%
+bind=,XF86MonBrightnessDown,exec,brightnessctl set 10%-
+
+# ── Screenshots ──────────────────────────────────────────────────────────────
+bind=,Print,exec,grim ~/screenshot-$(date +%s).png
+bind=ALT,Print,exec,grim -g "$(slurp)" ~/screenshot-$(date +%s).png
 MANGO
     fi
+
+    # Fix ownership — dotfiles were written as root from the live env
+    chown -R 1000:1000 "$home"
 }
 
 collect_config() {
@@ -315,7 +389,7 @@ Continue with ZFS?" 10 60 || exit 0
         "systemd" "Full systemd — journald, networkd, socket activation" \
         "runit"   "Supervision-based — very fast boot, minimal" \
         "s6"      "skarnet supervision suite — low overhead" \
-        "dinit"   "Dependency-ordered, modern (experimental — not recommended)"
+        "dinit"   "becareful — experimental, limited service coverage, not recommended"
     INIT_SYSTEM=$(result)
 
     if [[ "$INIT_SYSTEM" == "systemd" && "$LIBC" == "musl" ]]; then
@@ -379,9 +453,10 @@ Are you sure you want dwm?" 10 56 || exit 0
             "slick" "Slick greeter — modern, user avatar support"
         GREETER=$(result)
     elif [[ "$DESKTOP" =~ ^(sway|hyprland|niri|river|wayfire|labwc|mangowm|weston)$ ]]; then
-        d --title "Greeter" --menu "Choose a greetd greeter:" 10 66 2 \
-            "tuigreet" "TUI greeter — terminal-based, fast" \
-            "gtkgreet" "GTK greeter — graphical, Wayland-native"
+        d --title "Greeter" --menu "Choose a display manager / greeter:" 12 66 3 \
+            "ly"       "ly — minimal TUI display manager (recommended)" \
+            "tuigreet" "tuigreet — greetd TUI greeter" \
+            "gtkgreet" "gtkgreet — greetd GTK greeter, Wayland-native"
         GREETER=$(result)
     fi
 
@@ -494,7 +569,16 @@ phase_disk() {
 
     case "$FS_TYPE" in
         ext4)  mkfs.ext4  -F -L root "$PART_ROOT" ;;
-        btrfs) mkfs.btrfs -f -L root "$PART_ROOT" ;;
+        btrfs)
+            mkfs.btrfs -f -L root "$PART_ROOT"
+            # Create subvolumes for snapper layout
+            mount "$PART_ROOT" "$MOUNT_ROOT"
+            btrfs subvolume create "$MOUNT_ROOT/@"
+            btrfs subvolume create "$MOUNT_ROOT/@home"
+            btrfs subvolume create "$MOUNT_ROOT/@snapshots"
+            btrfs subvolume create "$MOUNT_ROOT/@var_log"
+            umount "$MOUNT_ROOT"
+            ;;
         xfs)   mkfs.xfs   -f -L root "$PART_ROOT" ;;
         zfs)
             zpool destroy rpool 2>/dev/null || true
@@ -517,6 +601,12 @@ phase_disk() {
         zfs mount rpool/root
         zfs mount rpool/home
         zfs mount rpool/log
+    elif [[ "$FS_TYPE" == "btrfs" ]]; then
+        mount -o compress=zstd,noatime,subvol=@ "$PART_ROOT" "$MOUNT_ROOT"
+        mkdir -p "$MOUNT_ROOT"/{home,.snapshots,var/log}
+        mount -o compress=zstd,noatime,subvol=@home      "$PART_ROOT" "$MOUNT_ROOT/home"
+        mount -o compress=zstd,noatime,subvol=@snapshots "$PART_ROOT" "$MOUNT_ROOT/.snapshots"
+        mount -o compress=zstd,noatime,subvol=@var_log   "$PART_ROOT" "$MOUNT_ROOT/var/log"
     else
         mount "$PART_ROOT" "$MOUNT_ROOT"
     fi
@@ -661,7 +751,7 @@ phase_chroot() {
         river)    desktop_pkgs="gui-wm/river $WAYLAND_BASE" ;;
         wayfire)  desktop_pkgs="gui-wm/wayfire gui-wm/wcm $WAYLAND_BASE" ;;
         labwc)    desktop_pkgs="gui-wm/labwc $WAYLAND_BASE" ;;
-        mangowm)  desktop_pkgs="gui-wm/mangowm gui-libs/scenefx $WAYLAND_BASE" ;;
+        mangowm)  desktop_pkgs="gui-wm/mangowm gui-libs/scenefx gui-apps/grim gui-apps/slurp $WAYLAND_BASE" ;;
         weston)   desktop_pkgs="gui-libs/weston x11-terms/alacritty sys-auth/seatd" ;;
     esac
 
@@ -678,10 +768,10 @@ phase_chroot() {
             ;;
         sway|hyprland|niri|river|wayfire|labwc|mangowm|weston)
             case "$GREETER" in
-                gtkgreet) dm_pkg="gui-apps/greetd gui-apps/gtkgreet" ;;
-                *)        dm_pkg="gui-apps/greetd gui-apps/greetd-tuigreet" ;;
+                ly)       dm_pkg="x11-misc/ly";                               dm_service="ly" ;;
+                gtkgreet) dm_pkg="gui-apps/greetd gui-apps/gtkgreet";         dm_service="greetd" ;;
+                *)        dm_pkg="gui-apps/greetd gui-apps/tuigreet";         dm_service="greetd" ;;
             esac
-            dm_service="greetd"
             ;;
     esac
 
@@ -737,6 +827,30 @@ if [[ "${FS_TYPE}" == "zfs" ]]; then
         systemd)
             systemctl enable zfs-import-cache zfs-import.target zfs-mount zfs-share zfs.target
             ;;
+        runit)
+            for svc in zfs-import zfs-mount; do
+                mkdir -p /etc/sv/${svc}
+                printf '#!/bin/sh\nexec %s\n' "${svc}" > /etc/sv/${svc}/run
+                chmod +x /etc/sv/${svc}/run
+                ln -sf /etc/sv/${svc} /etc/service/${svc}
+            done
+            ;;
+        s6)
+            for svc in zfs-import zfs-mount; do
+                mkdir -p /etc/s6/adminsv/${svc}
+                printf 'longrun' > /etc/s6/adminsv/${svc}/type
+                printf '#!/bin/execlineb -P\n%s\n' "${svc}" > /etc/s6/adminsv/${svc}/run
+                chmod +x /etc/s6/adminsv/${svc}/run
+                ln -sf /etc/s6/adminsv/${svc} /etc/s6/adminsv/default/contents.d/${svc}
+            done
+            ;;
+        dinit)
+            mkdir -p /etc/dinit.d/boot.d
+            for svc in zfs-import zfs-mount; do
+                [[ -f /etc/dinit.d/${svc} ]] && \
+                    ln -sf /etc/dinit.d/${svc} /etc/dinit.d/boot.d/${svc} || true
+            done
+            ;;
     esac
 fi
 
@@ -752,6 +866,16 @@ if [[ "${FS_TYPE}" == "zfs" ]]; then
     cat > /etc/fstab <<FSTAB
 # ZFS datasets are mounted by the initramfs — no root entry needed
 UUID=${swap_uuid}  none  swap  sw  0 0
+${fstab_boot}
+${fstab_efi}
+FSTAB
+elif [[ "${FS_TYPE}" == "btrfs" ]]; then
+    cat > /etc/fstab <<FSTAB
+UUID=${root_uuid}  /            btrfs  compress=zstd,noatime,subvol=@           0 0
+UUID=${root_uuid}  /home        btrfs  compress=zstd,noatime,subvol=@home       0 0
+UUID=${root_uuid}  /.snapshots  btrfs  compress=zstd,noatime,subvol=@snapshots  0 0
+UUID=${root_uuid}  /var/log     btrfs  compress=zstd,noatime,subvol=@var_log    0 0
+UUID=${swap_uuid}  none         swap   sw                                        0 0
 ${fstab_boot}
 ${fstab_efi}
 FSTAB
@@ -800,6 +924,7 @@ RUN
         ;;
     s6)
         mkdir -p /etc/s6/adminsv/dhcpcd /etc/s6/adminsv/default/contents.d
+        printf 'longrun' > /etc/s6/adminsv/dhcpcd/type
         cat > /etc/s6/adminsv/dhcpcd/run <<'RUN'
 #!/bin/execlineb -P
 dhcpcd -B -q
@@ -808,16 +933,29 @@ RUN
         ln -sf /etc/s6/adminsv/dhcpcd /etc/s6/adminsv/default/contents.d/dhcpcd
         ;;
     dinit)
-        emerge -q net-misc/dhcpcd
-        dinitctl enable dhcpcd
+        # Write service file — dhcpcd may not ship one for dinit
+        cat > /etc/dinit.d/dhcpcd <<'DSVC'
+type = process
+command = /sbin/dhcpcd -B -q
+depends-on = local.target
+DSVC
+        mkdir -p /etc/dinit.d/boot.d
+        ln -sf /etc/dinit.d/dhcpcd /etc/dinit.d/boot.d/dhcpcd
         ;;
 esac
 
 echo "[chroot] Setting root password..."
 echo "root:${ROOT_PASSWORD}" | chpasswd
 
+echo "[chroot] Creating user raiju..."
+useradd -m -G wheel,audio,video,input,usb -s /bin/bash raiju
+echo "raiju:${ROOT_PASSWORD}" | chpasswd
+emerge -q app-admin/doas
+echo "permit persist :wheel" > /etc/doas.conf
+chmod 600 /etc/doas.conf
+
 echo "[chroot] Installing base system tools..."
-emerge -q app-admin/sysklogd sys-process/cronie sys-apps/mlocate net-misc/ntp
+emerge -q app-admin/sysklogd sys-process/cronie sys-apps/mlocate net-misc/ntp app-editors/vim
 
 case "${INIT_SYSTEM}" in
     openrc)
@@ -851,14 +989,55 @@ RUN
         done
         ;;
     s6)
+        declare -A _s6cmd=([sysklogd]="syslogd -n" [cronie]="crond -n" [ntpd]="ntpd -n -g")
         for svc in sysklogd cronie ntpd; do
+            mkdir -p /etc/s6/adminsv/${svc}
+            printf 'longrun' > /etc/s6/adminsv/${svc}/type
+            printf '#!/bin/execlineb -P\n%s\n' "${_s6cmd[$svc]}" > /etc/s6/adminsv/${svc}/run
+            chmod +x /etc/s6/adminsv/${svc}/run
             ln -sf /etc/s6/adminsv/${svc} /etc/s6/adminsv/default/contents.d/${svc}
         done
         ;;
     dinit)
-        for svc in sysklogd cronie ntpd; do dinitctl enable ${svc}; done
+        # Write service files — these packages may not ship dinit units
+        cat > /etc/dinit.d/sysklogd <<'DSVC'
+type = process
+command = /sbin/syslogd -n
+depends-on = local.target
+DSVC
+        cat > /etc/dinit.d/cronie <<'DSVC'
+type = process
+command = /usr/sbin/crond -n
+depends-on = local.target
+DSVC
+        cat > /etc/dinit.d/ntpd <<'DSVC'
+type = process
+command = /usr/sbin/ntpd -n -g
+depends-on = local.target
+DSVC
+        mkdir -p /etc/dinit.d/boot.d
+        for svc in sysklogd cronie ntpd; do
+            ln -sf /etc/dinit.d/${svc} /etc/dinit.d/boot.d/${svc}
+        done
         ;;
 esac
+
+if [[ "${FS_TYPE}" == "btrfs" ]]; then
+    echo "[chroot] Installing snapper..."
+    emerge -q app-backup/snapper
+    # Create snapper config for root subvolume
+    snapper --no-dbus -c root create-config /
+    # Set snapshot limits to keep things sane
+    sed -i 's/^TIMELINE_LIMIT_HOURLY=.*/TIMELINE_LIMIT_HOURLY="5"/'   /etc/snapper/configs/root
+    sed -i 's/^TIMELINE_LIMIT_DAILY=.*/TIMELINE_LIMIT_DAILY="7"/'     /etc/snapper/configs/root
+    sed -i 's/^TIMELINE_LIMIT_WEEKLY=.*/TIMELINE_LIMIT_WEEKLY="4"/'   /etc/snapper/configs/root
+    sed -i 's/^TIMELINE_LIMIT_MONTHLY=.*/TIMELINE_LIMIT_MONTHLY="6"/' /etc/snapper/configs/root
+    sed -i 's/^TIMELINE_LIMIT_YEARLY=.*/TIMELINE_LIMIT_YEARLY="2"/'   /etc/snapper/configs/root
+    case "${INIT_SYSTEM}" in
+        openrc)  rc-update add snapper-timeline default; rc-update add snapper-cleanup default ;;
+        systemd) systemctl enable snapper-timeline.timer snapper-cleanup.timer ;;
+    esac
+fi
 
 echo "[chroot] Installing GRUB..."
 mkdir -p /etc/portage/package.use
@@ -914,10 +1093,27 @@ RUN
                 chmod +x /etc/sv/${dm_service}/run
                 ln -sf /etc/sv/${dm_service} /etc/service/${dm_service}
                 ;;
-            s6)    ln -sf /etc/s6/adminsv/${dm_service} /etc/s6/adminsv/default/contents.d/${dm_service} ;;
-            dinit) dinitctl enable ${dm_service} ;;
+            s6)
+                mkdir -p /etc/s6/adminsv/${dm_service}
+                printf 'longrun' > /etc/s6/adminsv/${dm_service}/type
+                printf '#!/bin/execlineb -P\n%s\n' "${dm_service}" > /etc/s6/adminsv/${dm_service}/run
+                chmod +x /etc/s6/adminsv/${dm_service}/run
+                ln -sf /etc/s6/adminsv/${dm_service} /etc/s6/adminsv/default/contents.d/${dm_service}
+                ;;
+            dinit)
+                # Use installed service file if present, else write a minimal one
+                if [[ ! -f /etc/dinit.d/${dm_service} ]]; then
+                    printf 'type = process\ncommand = /usr/sbin/%s\ndepends-on = local.target\n' \
+                        "${dm_service}" > /etc/dinit.d/${dm_service}
+                fi
+                mkdir -p /etc/dinit.d/boot.d
+                ln -sf /etc/dinit.d/${dm_service} /etc/dinit.d/boot.d/${dm_service}
+                ;;
         esac
     fi
+
+    echo "[chroot] Installing Firefox..."
+    emerge -q www-client/firefox-bin
 fi
 
 if [[ -n "${audio_pkgs}" ]]; then
@@ -946,6 +1142,19 @@ vt = 1
 command = "gtkgreet"
 user = "greeter"
 GCONF
+fi
+
+# Compile s6-rc service database after all services have been configured
+if [[ "${INIT_SYSTEM}" == "s6" ]]; then
+    echo "[chroot] Compiling s6-rc service database..."
+    # Source dir is adminsv; compiled db replaces the existing one atomically
+    if command -v s6-rc-compile &>/dev/null; then
+        s6-rc-compile /etc/s6/rc/compiled.new /etc/s6/adminsv && \
+            mv /etc/s6/rc/compiled.new /etc/s6/rc/compiled || \
+            echo "[warn] s6-rc-compile failed — service activation may need manual repair post-boot"
+    else
+        echo "[warn] s6-rc-compile not found — service activation may need manual repair post-boot"
+    fi
 fi
 
 echo "[chroot] Done!"
