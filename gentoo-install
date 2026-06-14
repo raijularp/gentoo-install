@@ -98,6 +98,7 @@ You still choose: disk, compositor, init, timezone, hostname, password." 22 60
 
     # Set fixed preset values
     CUSTOM_USE=""
+    BOOTLOADER="grub"
     LIBC="glibc"
     FS_TYPE="btrfs"
     KERNEL_METHOD="genkernel"
@@ -471,6 +472,17 @@ Example: -pulseaudio nls offensive" \
 12 66 ""
     CUSTOM_USE=$(result)
 
+    # ── Bootloader ──
+    if [[ "$SYS_FIRMWARE" == "uefi" ]]; then
+        d --title "Bootloader" --menu "Choose a bootloader:" 12 68 3 \
+            "grub"         "GRUB — universal, supports all setups (recommended)" \
+            "systemd-boot" "systemd-boot — minimal, UEFI only, fast" \
+            "refind"       "rEFInd — graphical, auto-detects kernels, UEFI only"
+        BOOTLOADER=$(result)
+    else
+        BOOTLOADER="grub"
+    fi
+
     # ── Kernel ──
     d --title "Kernel Build" --menu "Choose kernel build method:" 10 64 2 \
         "genkernel" "Automated — recommended for most users" \
@@ -517,6 +529,7 @@ Example: -pulseaudio nls offensive" \
   Audio:       ${AUDIO:-none}
   Greeter:     ${GREETER:-n/a}
   Kernel:      $KERNEL_METHOD
+  Bootloader:  $BOOTLOADER
   Timezone:    $TIMEZONE
   Hostname:    $HOSTNAME
 ────────────────────────────────────
@@ -1049,16 +1062,52 @@ if [[ "${FS_TYPE}" == "btrfs" ]]; then
     esac
 fi
 
-echo "[chroot] Installing GRUB..."
-mkdir -p /etc/portage/package.use
-if [[ "${SYS_FIRMWARE}" == "uefi" ]]; then
-    echo "sys-boot/grub:2 grub_platforms_efi-64" >> /etc/portage/package.use/grub
-else
-    echo "sys-boot/grub:2 grub_platforms_pc" >> /etc/portage/package.use/grub
-fi
-emerge -q sys-boot/grub
-grub-install ${grub_target}
-grub-mkconfig -o /boot/grub/grub.cfg
+echo "[chroot] Installing bootloader (${BOOTLOADER})..."
+case "${BOOTLOADER}" in
+    grub)
+        mkdir -p /etc/portage/package.use
+        if [[ "${SYS_FIRMWARE}" == "uefi" ]]; then
+            echo "sys-boot/grub:2 grub_platforms_efi-64" >> /etc/portage/package.use/grub
+        else
+            echo "sys-boot/grub:2 grub_platforms_pc" >> /etc/portage/package.use/grub
+        fi
+        emerge -q sys-boot/grub
+        grub-install ${grub_target}
+        grub-mkconfig -o /boot/grub/grub.cfg
+        ;;
+    systemd-boot)
+        emerge -q sys-apps/systemd-utils
+        bootctl install --esp-path=/boot/efi
+        mkdir -p /boot/efi/loader/entries
+        cat > /boot/efi/loader/loader.conf <<LDRCONF
+default gentoo.conf
+timeout 4
+console-mode max
+editor no
+LDRCONF
+        # Find kernel + initramfs written by genkernel
+        KERN=$(ls /boot/vmlinuz-* 2>/dev/null | sort -V | tail -1 | sed 's|/boot/||')
+        INIT=$(ls /boot/initramfs-* 2>/dev/null | sort -V | tail -1 | sed 's|/boot/||')
+        ROOT_OPTS="root=UUID=${root_uuid} rw quiet"
+        [[ "${FS_TYPE}" == "btrfs" ]] && ROOT_OPTS="${ROOT_OPTS} rootflags=subvol=@"
+        [[ "${FS_TYPE}" == "zfs"   ]] && ROOT_OPTS="root=ZFS=rpool/root rw"
+        cat > /boot/efi/loader/entries/gentoo.conf <<ENTRY
+title   Gentoo Linux
+linux   /${KERN}
+initrd  /${INIT}
+options ${ROOT_OPTS}
+ENTRY
+        ;;
+    refind)
+        emerge -q sys-boot/refind
+        refind-install
+        # rEFInd auto-detects kernels; write a minimal refind_linux.conf hint
+        ROOT_OPTS="root=UUID=${root_uuid} rw quiet"
+        [[ "${FS_TYPE}" == "btrfs" ]] && ROOT_OPTS="${ROOT_OPTS} rootflags=subvol=@"
+        [[ "${FS_TYPE}" == "zfs"   ]] && ROOT_OPTS="root=ZFS=rpool/root rw"
+        echo "\"Boot\" \"${ROOT_OPTS}\"" > /boot/refind_linux.conf
+        ;;
+esac
 
 if [[ -n "${desktop_pkgs}" ]]; then
     echo "[chroot] Installing desktop environment (this will take a while)..."
@@ -1200,6 +1249,7 @@ CHROOT_SCRIPT
         dm_service="$dm_service" \
         audio_pkgs="$audio_pkgs" \
         CUSTOM_USE="${CUSTOM_USE:-}" \
+        BOOTLOADER="${BOOTLOADER:-grub}" \
         chroot "$MOUNT_ROOT" /bin/bash /setup-chroot.sh
 
     rm -f "$MOUNT_ROOT/setup-chroot.sh"
