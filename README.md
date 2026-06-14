@@ -111,7 +111,7 @@ A personal preset for the repo owner. First option in the mode menu. Sets:
 - Kernel: genkernel
 - Dotfiles: pre-configured niri/mango configs with Noctalia Shell IPC keybinds (Alt modifier, Alt+P for launcher)
 
-> **Don't use Raiju mode.** It's for one person. You are probably not that person.
+> **Don't use Raiju mode.** It's for one person. You are probably not that person. try and guess
 
 ---
 
