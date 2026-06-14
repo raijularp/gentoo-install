@@ -20,7 +20,7 @@ command -v mkfs.ext4 &>/dev/null || { echo "e2fsprogs is required."; exit 1; }
 # ─── TUI helpers ──────────────────────────────────────────────────────────────
 # All dialog calls write their result to $TMP via stderr redirect
 _DIALOG_EXIT=0
-d()      { dialog --backtitle "$BACKTITLE" "$@" 2>"$TMP"; _DIALOG_EXIT=$?; return 0; }
+d()      { _DIALOG_EXIT=0; dialog --backtitle "$BACKTITLE" "$@" 2>"$TMP" || _DIALOG_EXIT=$?; }
 result() { cat "$TMP"; }
 dialog_ok() { [[ $_DIALOG_EXIT -eq 0 ]]; }
 die()    { dialog --backtitle "$BACKTITLE" --title "Fatal Error" --msgbox "$*" 8 60; exit 1; }
