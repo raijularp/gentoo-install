@@ -723,19 +723,18 @@ phase_disk() {
 phase_stage3() {
     info_box "Fetching latest stage3 URL..."
 
+    # Gentoo only ships stage3s for openrc and systemd.
+    # runit/s6/dinit use the openrc stage3 as base; the init is swapped post-install.
     local stage3_variant stage3_dir
     if [[ "$LIBC" == "musl" ]]; then
         case "$INIT_SYSTEM" in
-            openrc) stage3_variant="amd64-musl";        stage3_dir="current-stage3-amd64-musl" ;;
-            *)      stage3_variant="amd64-musl-openrc"; stage3_dir="current-stage3-amd64-musl-openrc" ;;
+            systemd) stage3_variant="amd64-musl-systemd"; stage3_dir="current-stage3-amd64-musl-systemd" ;;
+            *)       stage3_variant="amd64-musl";         stage3_dir="current-stage3-amd64-musl" ;;
         esac
     else
         case "$INIT_SYSTEM" in
-            openrc)  stage3_variant="amd64-openrc";  stage3_dir="current-stage3-amd64-openrc" ;;
             systemd) stage3_variant="amd64-systemd"; stage3_dir="current-stage3-amd64-systemd" ;;
-            runit)   stage3_variant="amd64-runit";   stage3_dir="current-stage3-amd64-runit" ;;
-            s6)      stage3_variant="amd64-s6";      stage3_dir="current-stage3-amd64-s6" ;;
-            dinit)   stage3_variant="amd64-dinit";   stage3_dir="current-stage3-amd64-dinit" ;;
+            *)       stage3_variant="amd64-openrc";  stage3_dir="current-stage3-amd64-openrc" ;;
         esac
     fi
 
@@ -904,6 +903,26 @@ else
         *)       eselect profile set default/linux/amd64/23.0 ;;
     esac
 fi
+
+echo "[chroot] Installing init system..."
+case "${INIT_SYSTEM}" in
+    openrc|systemd)
+        # Already in the stage3 — nothing to do
+        ;;
+    runit)
+        emerge -q sys-process/runit sys-process/runit-scripts
+        # Remove OpenRC services that conflict
+        rc-update -a del 2>/dev/null || true
+        ;;
+    s6)
+        emerge -q sys-apps/s6 sys-apps/s6-rc sys-apps/s6-linux-init
+        rc-update -a del 2>/dev/null || true
+        ;;
+    dinit)
+        emerge -q sys-apps/dinit
+        rc-update -a del 2>/dev/null || true
+        ;;
+esac
 
 echo "[chroot] Setting timezone..."
 # Case-insensitive match against actual zoneinfo files
