@@ -642,6 +642,75 @@ Proceed with installation?" 22 52
     dialog_ok || exit 0
 }
 
+# ─── Phase 0: WiFi ────────────────────────────────────────────────────────────
+phase_wifi() {
+    # Skip if already online
+    if curl -s --max-time 5 https://distfiles.gentoo.org >/dev/null 2>&1; then
+        return 0
+    fi
+
+    d --title "Network" --yesno \
+"No internet connection detected.
+
+Do you want to connect to a WiFi network?" 8 52
+    if ! dialog_ok; then
+        return 0
+    fi
+
+    # List available interfaces
+    local iface
+    iface=$(iw dev 2>/dev/null | awk '/Interface/{print $2}' | head -1 || true)
+    if [[ -z "$iface" ]]; then
+        d --title "WiFi" --msgbox "No wireless interface found.\nConnect via ethernet and re-run the script." 8 56
+        return 0
+    fi
+
+    # Scan for networks
+    info_box "Scanning for WiFi networks on $iface..."
+    ip link set "$iface" up 2>/dev/null || true
+    local scan_out
+    scan_out=$(iw dev "$iface" scan 2>/dev/null | grep 'SSID:' | sed 's/.*SSID: //' | grep -v '^$' | sort -u || true)
+
+    local ssid
+    if [[ -n "$scan_out" ]]; then
+        local ssid_args=()
+        while IFS= read -r s; do
+            ssid_args+=("$s" "")
+        done <<< "$scan_out"
+        ssid_args+=("__manual__" "Enter SSID manually")
+        d --title "WiFi — Select Network" --menu "Choose a network:" 20 60 12 "${ssid_args[@]}"
+        ssid=$(result)
+    fi
+
+    if [[ -z "$ssid" || "$ssid" == "__manual__" ]]; then
+        d --title "WiFi — SSID" --inputbox "Enter WiFi network name (SSID):" 8 54 ""
+        ssid=$(result)
+    fi
+    [[ -z "$ssid" ]] && return 0
+
+    d --title "WiFi — Password" --passwordbox "Enter password for \"$ssid\":" 8 54
+    local psk; psk=$(result)
+
+    info_box "Connecting to $ssid..."
+    local wpa_conf; wpa_conf=$(mktemp)
+    wpa_passphrase "$ssid" "$psk" > "$wpa_conf"
+    # Kill any existing wpa_supplicant
+    pkill wpa_supplicant 2>/dev/null || true
+    sleep 1
+    wpa_supplicant -B -i "$iface" -c "$wpa_conf" -P /tmp/wpa.pid >/dev/null 2>&1
+    rm -f "$wpa_conf"
+
+    # Get IP via DHCP
+    dhcpcd "$iface" -t 15 -q 2>/dev/null || dhclient "$iface" 2>/dev/null || true
+
+    # Verify
+    if curl -s --max-time 10 https://distfiles.gentoo.org >/dev/null 2>&1; then
+        d --title "WiFi" --msgbox "Connected to $ssid successfully." 6 48
+    else
+        d --title "WiFi" --msgbox "Could not verify connection.\nProceeding anyway — installation may fail if offline." 8 58
+    fi
+}
+
 # ─── Phase 1: Disk ────────────────────────────────────────────────────────────
 phase_disk() {
     info_box "Unmounting any existing mounts on $DISK..."
@@ -1312,16 +1381,21 @@ esac
 if [[ -n "${desktop_pkgs}" ]]; then
     echo "[chroot] Installing desktop environment (this will take a while)..."
 
+    # Unmask ly — it is in ~amd64 (testing) on most Gentoo profiles
+    mkdir -p /etc/portage/package.accept_keywords
+    echo "x11-misc/ly ~amd64" >> /etc/portage/package.accept_keywords/ly
+
     # Enable GURU overlay if needed (mangowm or noctalia)
     if [[ "${DESKTOP}" == "mangowm" || "${RAIJU_MODE}" == "1" ]]; then
         emerge -q app-eselect/eselect-repository dev-vcs/git
         eselect repository enable guru
         emerge --sync guru
         mkdir -p /etc/portage/package.accept_keywords
-        echo "gui-wm/mangowm ~amd64"        >> /etc/portage/package.accept_keywords/raiju
-        echo "gui-libs/scenefx ~amd64"      >> /etc/portage/package.accept_keywords/raiju
-        echo "gui-apps/noctalia-shell ~amd64" >> /etc/portage/package.accept_keywords/raiju
-        echo "gui-apps/noctalia-qs ~amd64"  >> /etc/portage/package.accept_keywords/raiju
+        echo "gui-wm/mangowm ~amd64"          >> /etc/portage/package.accept_keywords/guru
+        echo "gui-libs/scenefx ~amd64"        >> /etc/portage/package.accept_keywords/guru
+        echo "gui-apps/noctalia-shell ~amd64" >> /etc/portage/package.accept_keywords/guru
+        echo "gui-apps/noctalia-qs ~amd64"    >> /etc/portage/package.accept_keywords/guru
+        echo "gui-wm/niri ~amd64"             >> /etc/portage/package.accept_keywords/guru
     fi
 
     emerge -q ${desktop_pkgs} ${dm_pkg}
@@ -1484,6 +1558,7 @@ main() {
     echo "Output will scroll below. Do not close this terminal."
     echo
 
+    phase_wifi
     phase_disk
     phase_stage3
     phase_portage
