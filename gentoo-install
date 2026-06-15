@@ -154,11 +154,13 @@ Proceed?" 24 50
     dialog_ok || exit 0
 
     RAIJU_MODE=1
+    USERNAME="raiju"
+    USER_PASSWORD="$ROOT_PASSWORD"
 }
 
 # Writes noctalia + compositor dotfiles for raiju's user (root for now, adjust post-install)
 phase_raiju_dotfiles() {
-    local home="$MOUNT_ROOT/home/raiju"
+    local home="$MOUNT_ROOT/home/${USERNAME:-raiju}"
     mkdir -p "$home"
 
     if [[ "$RAIJU_COMPOSITOR" == "niri" ]]; then
@@ -556,14 +558,29 @@ Requires genkernel (forced on)." 12 62
     HOSTNAME=$(result)
     [[ -n "$HOSTNAME" ]] || HOSTNAME="gentoo"
 
+    # ── Username ──
+    d --title "User Account" --inputbox "Enter username for the new user account:" 8 54 ""
+    USERNAME=$(result)
+    [[ -n "$USERNAME" ]] || USERNAME="user"
+
+    # ── User password ──
+    local upw1 upw2
+    d --title "User Password" --passwordbox "Enter password for $USERNAME:" 8 50
+    upw1=$(result)
+    d --title "User Password" --passwordbox "Confirm password for $USERNAME:" 8 50
+    upw2=$(result)
+    [[ "$upw1" == "$upw2" ]] || die "User passwords do not match."
+    [[ -n "$upw1" ]]          || die "User password cannot be empty."
+    USER_PASSWORD="$upw1"
+
     # ── Root password ──
     local pw1 pw2
     d --title "Root Password" --passwordbox "Enter root password:" 8 50
     pw1=$(result)
     d --title "Root Password" --passwordbox "Confirm root password:" 8 50
     pw2=$(result)
-    [[ "$pw1" == "$pw2" ]] || die "Passwords do not match."
-    [[ -n "$pw1" ]]         || die "Password cannot be empty."
+    [[ "$pw1" == "$pw2" ]] || die "Root passwords do not match."
+    [[ -n "$pw1" ]]         || die "Root password cannot be empty."
     ROOT_PASSWORD="$pw1"
 
     # ── Summary + confirm ──
@@ -582,6 +599,7 @@ Requires genkernel (forced on)." 12 62
   Bootloader:  $BOOTLOADER
   Timezone:    $TIMEZONE
   Hostname:    $HOSTNAME
+  User:        $USERNAME
 ────────────────────────────────────
   ALL DATA ON $DISK WILL BE DESTROYED.
 
@@ -1042,9 +1060,9 @@ esac
 echo "[chroot] Setting root password..."
 echo "root:${ROOT_PASSWORD}" | chpasswd
 
-echo "[chroot] Creating user raiju..."
-useradd -m -G wheel,audio,video,input -s /bin/bash raiju
-echo "raiju:${ROOT_PASSWORD}" | chpasswd
+echo "[chroot] Creating user ${USERNAME}..."
+useradd -m -G wheel,audio,video,input -s /bin/bash "${USERNAME}"
+echo "${USERNAME}:${USER_PASSWORD}" | chpasswd
 emerge -q app-admin/doas
 echo "permit persist :wheel" > /etc/doas.conf
 chmod 600 /etc/doas.conf
@@ -1379,6 +1397,8 @@ CHROOT_SCRIPT
         audio_pkgs="$audio_pkgs" \
         CUSTOM_USE="${CUSTOM_USE:-}" \
         BOOTLOADER="${BOOTLOADER:-grub}" \
+        USERNAME="${USERNAME:-user}" \
+        USER_PASSWORD="${USER_PASSWORD:-}" \
         chroot "$MOUNT_ROOT" /bin/bash /setup-chroot.sh
 
     rm -f "$MOUNT_ROOT/setup-chroot.sh"
@@ -1402,6 +1422,8 @@ phase_cleanup() {
 main() {
     RAIJU_MODE=0
     RAIJU_COMPOSITOR=""
+    USERNAME=""
+    USER_PASSWORD=""
     collect_config
 
     clear
