@@ -1126,56 +1126,43 @@ fi
 echo "[chroot] Setting hostname..."
 echo "${HOSTNAME}" > /etc/hostname
 
-echo "[chroot] Configuring network..."
-emerge -q net-misc/dhcpcd
+echo "[chroot] Configuring network (NetworkManager)..."
+emerge -q net-misc/networkmanager
 
 case "${INIT_SYSTEM}" in
     openrc)
-        echo 'config_eth0="dhcp"' >> /etc/conf.d/net
-        ln -sf /etc/init.d/net.lo /etc/init.d/net.eth0
-        rc-update add net.eth0 default
-        rc-update add dhcpcd default
+        rc-update add NetworkManager default
         ;;
     systemd)
-        systemctl enable systemd-networkd systemd-resolved
-        mkdir -p /etc/systemd/network
-        cat > /etc/systemd/network/20-dhcp.network <<NET
-[Match]
-Name=en*
-[Network]
-DHCP=yes
-NET
+        systemctl enable NetworkManager
         ;;
     runit)
-        # runit stage3 only ships agetty services — write run scripts manually
-        # Service repo: /etc/sv   Scan dir: /etc/service
-        mkdir -p /etc/sv/dhcpcd /etc/service
-        cat > /etc/sv/dhcpcd/run <<'RUN'
+        mkdir -p /etc/sv/NetworkManager /etc/service
+        cat > /etc/sv/NetworkManager/run <<'RUN'
 #!/bin/sh
-exec dhcpcd -B -q
+exec NetworkManager --no-daemon
 RUN
-        chmod +x /etc/sv/dhcpcd/run
-        ln -sf /etc/sv/dhcpcd /etc/service/dhcpcd
+        chmod +x /etc/sv/NetworkManager/run
+        ln -sf /etc/sv/NetworkManager /etc/service/NetworkManager
         ;;
     s6)
-        mkdir -p /etc/s6/adminsv/dhcpcd /etc/s6/adminsv/default/contents.d
-        printf 'longrun' > /etc/s6/adminsv/dhcpcd/type
-        cat > /etc/s6/adminsv/dhcpcd/run <<'RUN'
+        mkdir -p /etc/s6/adminsv/NetworkManager /etc/s6/adminsv/default/contents.d
+        printf 'longrun' > /etc/s6/adminsv/NetworkManager/type
+        cat > /etc/s6/adminsv/NetworkManager/run <<'RUN'
 #!/bin/execlineb -P
-dhcpcd -B -q
+NetworkManager --no-daemon
 RUN
-        chmod +x /etc/s6/adminsv/dhcpcd/run
-        ln -sf /etc/s6/adminsv/dhcpcd /etc/s6/adminsv/default/contents.d/dhcpcd
+        chmod +x /etc/s6/adminsv/NetworkManager/run
+        ln -sf /etc/s6/adminsv/NetworkManager /etc/s6/adminsv/default/contents.d/NetworkManager
         ;;
     dinit)
-        # Write service file — dhcpcd may not ship one for dinit
-        cat > /etc/dinit.d/dhcpcd <<'DSVC'
+        cat > /etc/dinit.d/NetworkManager <<'DSVC'
 type = process
-command = /sbin/dhcpcd -B -q
+command = /usr/sbin/NetworkManager --no-daemon
 depends-on = local.target
 DSVC
         mkdir -p /etc/dinit.d/boot.d
-        ln -sf /etc/dinit.d/dhcpcd /etc/dinit.d/boot.d/dhcpcd
+        ln -sf /etc/dinit.d/NetworkManager /etc/dinit.d/boot.d/NetworkManager
         ;;
 esac
 
