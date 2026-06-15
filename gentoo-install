@@ -910,8 +910,7 @@ case "${INIT_SYSTEM}" in
         # Already in the stage3 — nothing to do
         ;;
     runit)
-        emerge -q sys-process/runit sys-process/runit-scripts
-        # Remove OpenRC services that conflict
+        emerge -q sys-process/runit
         rc-update -a del 2>/dev/null || true
         ;;
     s6)
