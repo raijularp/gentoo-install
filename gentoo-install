@@ -350,6 +350,29 @@ bind=ALT,Print,exec,grim -g "$(slurp)" ~/screenshot-$(date +%s).png
 MANGO
     fi
 
+    # Write Wayland session entry so ly can find the compositor
+    local session_dir="$MOUNT_ROOT/usr/share/wayland-sessions"
+    mkdir -p "$session_dir"
+    if [[ "$RAIJU_COMPOSITOR" == "niri" ]]; then
+        cat > "$session_dir/niri.desktop" <<'DESK'
+[Desktop Entry]
+Name=niri
+Comment=Scrollable tiling Wayland compositor
+Exec=niri-session
+Type=Application
+DesktopNames=niri
+DESK
+    elif [[ "$RAIJU_COMPOSITOR" == "mangowm" ]]; then
+        cat > "$session_dir/mangowm.desktop" <<'DESK'
+[Desktop Entry]
+Name=mangowm
+Comment=Minimalist Wayland compositor
+Exec=mangowm
+Type=Application
+DesktopNames=mangowm
+DESK
+    fi
+
     # Fix ownership — dotfiles were written as root from the live env
     chown -R 1000:1000 "$home"
 }
