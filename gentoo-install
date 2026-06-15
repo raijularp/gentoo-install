@@ -677,13 +677,26 @@ Do you want to connect to a WiFi network?" 8 52
         return 0
     fi
 
-    # List available interfaces
-    local iface
-    iface=$(iw dev 2>/dev/null | awk '/Interface/{print $2}' | head -1 || true)
-    if [[ -z "$iface" ]]; then
+    # List available wireless interfaces and let user pick
+    local iface_list=()
+    while IFS= read -r i; do
+        iface_list+=("$i" "")
+    done < <(iw dev 2>/dev/null | awk '/Interface/{print $2}' || true)
+
+    if [[ ${#iface_list[@]} -eq 0 ]]; then
         d --title "WiFi" --msgbox "No wireless interface found.\nConnect via ethernet and re-run the script." 8 56
         return 0
     fi
+
+    local iface
+    if [[ ${#iface_list[@]} -eq 2 ]]; then
+        # Only one interface — use it directly
+        iface="${iface_list[0]}"
+    else
+        d --title "WiFi — Interface" --menu "Select your wireless interface:" 12 50 6 "${iface_list[@]}"
+        iface=$(result)
+    fi
+    [[ -z "$iface" ]] && return 0
 
     # Scan for networks
     info_box "Scanning for WiFi networks on $iface..."
