@@ -11,7 +11,7 @@ TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 
 # ─── Sanity checks ────────────────────────────────────────────────────────────
-[[ $EUID -ne 0 ]]        && { echo "Run as root."; exit 1; }
+if [[ $EUID -ne 0 ]]; then echo "Run as root."; exit 1; fi
 command -v dialog    &>/dev/null || { echo "dialog is required. Run: emerge dialog"; exit 1; }
 command -v curl      &>/dev/null || { echo "curl is required.";   exit 1; }
 command -v parted    &>/dev/null || { echo "parted is required."; exit 1; }
@@ -523,7 +523,6 @@ It is booted directly by the EFI firmware — no bootloader layer.
 efibootmgr will register it as the default boot entry.
 
 Requires genkernel (forced on)." 12 62
-            KERNEL_METHOD="genkernel"
         fi
     else
         d --title "Bootloader" --menu "Choose a bootloader:" 10 68 2 \
@@ -533,10 +532,14 @@ Requires genkernel (forced on)." 12 62
     fi
 
     # ── Kernel ──
-    d --title "Kernel Build" --menu "Choose kernel build method:" 10 64 2 \
-        "genkernel" "Automated — recommended for most users" \
-        "manual"    "Manual — configure and compile yourself post-install"
-    KERNEL_METHOD=$(result)
+    if [[ "$BOOTLOADER" == "uki" ]]; then
+        KERNEL_METHOD="genkernel"
+    else
+        d --title "Kernel Build" --menu "Choose kernel build method:" 10 64 2 \
+            "genkernel" "Automated — recommended for most users" \
+            "manual"    "Manual — configure and compile yourself post-install"
+        KERNEL_METHOD=$(result)
+    fi
 
     # ── Timezone ──
     pick_timezone
@@ -761,7 +764,7 @@ phase_portage() {
         gnome)   use_flags="$use_flags gnome" ;;
         xfce)    use_flags="$use_flags xfce gtk" ;;
         wayfire) use_flags="$use_flags gtk opengl" ;;
-        *)       [[ "$DESKTOP" != "none" ]] && use_flags="$use_flags gtk" ;;
+        *)       if [[ "$DESKTOP" != "none" ]]; then use_flags="$use_flags gtk"; fi ;;
     esac
 
     cat > "$MOUNT_ROOT/etc/portage/make.conf" <<EOF
@@ -890,7 +893,8 @@ emerge --config sys-libs/timezone-data
 echo "[chroot] Setting locale..."
 echo "${LOCALE} UTF-8" >> /etc/locale.gen
 locale-gen
-eselect locale set "$(locale -a | grep -i "${LOCALE%%.*}" | head -1)"
+_locale_sel=$(locale -a 2>/dev/null | grep -i "${LOCALE%%.*}" | head -1 || true)
+if [[ -n "$_locale_sel" ]]; then eselect locale set "$_locale_sel"; fi
 env-update
 source /etc/profile 2>/dev/null || true
 
@@ -940,7 +944,11 @@ fi
 
 if [[ "${KERNEL_METHOD}" == "genkernel" || "${FS_TYPE}" == "zfs" ]]; then
     emerge -q sys-kernel/genkernel
-    [[ "${FS_TYPE}" == "zfs" ]] && genkernel --zfs all || genkernel all
+    if [[ "${FS_TYPE}" == "zfs" ]]; then
+        genkernel --zfs all
+    else
+        genkernel all
+    fi
 elif [[ "${KERNEL_METHOD}" == "manual" ]]; then
     echo "[chroot] Kernel sources at /usr/src/linux — compile manually post-install."
 fi
@@ -1133,8 +1141,8 @@ if [[ "${FS_TYPE}" == "btrfs" ]]; then _root_opts="${_root_opts} rootflags=subvo
 if [[ "${FS_TYPE}" == "zfs"   ]]; then _root_opts="root=ZFS=rpool/root rw"; fi
 
 # Locate kernel + initramfs written by genkernel (used by several bootloaders)
-_kern=$(ls /boot/vmlinuz-* 2>/dev/null | sort -V | tail -1)
-_init=$(ls /boot/initramfs-* 2>/dev/null | sort -V | tail -1)
+_kern=$(find /boot -maxdepth 1 -name 'vmlinuz-*' 2>/dev/null | sort -V | tail -1 || true)
+_init=$(find /boot -maxdepth 1 -name 'initramfs-*' 2>/dev/null | sort -V | tail -1 || true)
 _kern_rel="${_kern#/boot/}"
 _init_rel="${_init#/boot/}"
 
