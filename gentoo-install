@@ -907,7 +907,7 @@ VIDEO_CARDS="intel amdgpu radeon nouveau"
 INPUT_DEVICES="libinput"
 
 ACCEPT_LICENSE="*"
-ACCEPT_KEYWORDS="amd64"
+ACCEPT_KEYWORDS="~amd64"
 
 GENTOO_MIRRORS="https://distfiles.gentoo.org"
 EOF
@@ -1368,21 +1368,11 @@ esac
 if [[ -n "${desktop_pkgs}" ]]; then
     echo "[chroot] Installing desktop environment (this will take a while)..."
 
-    # Unmask ly — it is in ~amd64 (testing) on most Gentoo profiles
-    mkdir -p /etc/portage/package.accept_keywords
-    echo "x11-misc/ly ~amd64" >> /etc/portage/package.accept_keywords/ly
-
     # Enable GURU overlay if needed (mangowm or noctalia)
     if [[ "${DESKTOP}" == "mangowm" || "${RAIJU_MODE}" == "1" ]]; then
         emerge -q app-eselect/eselect-repository dev-vcs/git
         eselect repository enable guru
         emerge --sync guru
-        mkdir -p /etc/portage/package.accept_keywords
-        echo "gui-wm/mangowm ~amd64"          >> /etc/portage/package.accept_keywords/guru
-        echo "gui-libs/scenefx ~amd64"        >> /etc/portage/package.accept_keywords/guru
-        echo "gui-apps/noctalia-shell ~amd64" >> /etc/portage/package.accept_keywords/guru
-        echo "gui-apps/noctalia-qs ~amd64"    >> /etc/portage/package.accept_keywords/guru
-        echo "gui-wm/niri ~amd64"             >> /etc/portage/package.accept_keywords/guru
     fi
 
     emerge -q ${desktop_pkgs} ${dm_pkg}
