@@ -507,12 +507,13 @@ Example: -pulseaudio nls offensive" \
 
     # ── Bootloader ──
     if [[ "$SYS_FIRMWARE" == "uefi" ]]; then
-        d --title "Bootloader" --menu "Choose a bootloader:" 16 72 5 \
+        d --title "Bootloader" --menu "Choose a bootloader:" 18 74 6 \
             "grub"         "GRUB — universal, supports all setups (recommended)" \
             "systemd-boot" "systemd-boot — minimal, fast, UEFI only" \
             "refind"       "rEFInd — graphical, auto-detects kernels, UEFI only" \
             "limine"       "Limine — modern, minimal config, UEFI + BIOS" \
-            "uki"          "UKI — single .efi image, no bootloader needed, UEFI only"
+            "uki"          "UKI — single .efi image, no bootloader needed, UEFI only" \
+            "libreboot"    "Libreboot — GRUB already in firmware, only generate grub.cfg"
         BOOTLOADER=$(result)
         if [[ "$BOOTLOADER" == "uki" ]]; then
             d --title "UKI Info" --msgbox \
@@ -525,9 +526,10 @@ efibootmgr will register it as the default boot entry.
 Requires genkernel (forced on)." 12 62
         fi
     else
-        d --title "Bootloader" --menu "Choose a bootloader:" 10 68 2 \
-            "grub"   "GRUB — standard, well-tested (recommended)" \
-            "limine" "Limine — modern, minimal config"
+        d --title "Bootloader" --menu "Choose a bootloader:" 12 72 3 \
+            "grub"      "GRUB — standard, well-tested (recommended)" \
+            "limine"    "Limine — modern, minimal config" \
+            "libreboot" "Libreboot — GRUB already in firmware, only generate grub.cfg"
         BOOTLOADER=$(result)
     fi
 
@@ -1221,6 +1223,16 @@ LIMCFG
         _esp_part_num=$(cat /sys/class/block/${_esp_dev##*/}/partition 2>/dev/null || echo 1)
         efibootmgr -c -d "${DISK}" -p "${_esp_part_num}" \
             -l '\EFI\Linux\gentoo.efi' -L "Gentoo Linux"
+        ;;
+
+    libreboot)
+        # Libreboot ships GRUB as a firmware payload — no grub-install needed.
+        # Install GRUB tools for grub-mkconfig, then generate the config only.
+        mkdir -p /etc/portage/package.use
+        echo "sys-boot/grub:2 grub_platforms_pc" >> /etc/portage/package.use/grub
+        emerge -q sys-boot/grub
+        mkdir -p /boot/grub
+        grub-mkconfig -o /boot/grub/grub.cfg
         ;;
 esac
 

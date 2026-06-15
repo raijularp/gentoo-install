@@ -47,7 +47,7 @@ chmod +x gentoo-install
 | **libc** | `glibc` (default), `musl` |
 | **Filesystem** | `ext4`, `btrfs` (+ snapper), `xfs`, `zfs` |
 | **Init system** | `openrc`, `systemd`, `runit`, `s6`, `dinit`* |
-| **Bootloader** | `grub`, `systemd-boot`†, `refind`†, `limine`, `uki`† |
+| **Bootloader** | `grub`, `systemd-boot`†, `refind`†, `limine`, `uki`†, `libreboot`‡ |
 | **Kernel** | `genkernel` (automated), `manual` |
 | **Audio** | `pipewire` (recommended), `pulseaudio`, `none` |
 | **Custom USE flags** | free-text input appended to auto-generated flags |
@@ -55,7 +55,8 @@ chmod +x gentoo-install
 | **Hostname** | any string |
 
 \* `dinit` is experimental — the script will warn you and label it "becareful"  
-† UEFI only
+† UEFI only  
+‡ requires Libreboot firmware already flashed — script only generates `grub.cfg`
 
 ### Bootloaders
 
@@ -66,6 +67,7 @@ chmod +x gentoo-install
 | rEFInd | — | ✓ | Graphical, auto-detects kernels |
 | Limine | ✓ | ✓ | Modern, minimal config |
 | UKI | — | ✓ | Single `.efi` bundle, registered directly with EFI firmware — no bootloader layer |
+| Libreboot | ✓ | ✓ | GRUB payload already in firmware — script generates `grub.cfg` only, no `grub-install` |
 
 ### Filesystems
 
