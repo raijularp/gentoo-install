@@ -892,7 +892,7 @@ echo "[chroot] Setting timezone..."
 _tz_match=$(find /usr/share/zoneinfo -type f | sed 's|/usr/share/zoneinfo/||' | grep -ix "${TIMEZONE}" | head -1 || true)
 if [[ -n "$_tz_match" ]]; then TIMEZONE="$_tz_match"; fi
 echo "${TIMEZONE}" > /etc/timezone
-emerge --config sys-libs/timezone-data
+ln -sf "/usr/share/zoneinfo/${TIMEZONE}" /etc/localtime
 
 echo "[chroot] Setting locale..."
 echo "${LOCALE} UTF-8" >> /etc/locale.gen
