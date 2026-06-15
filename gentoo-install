@@ -872,8 +872,10 @@ phase_chroot() {
 #!/usr/bin/env bash
 set -euo pipefail
 
+trap 'echo "[chroot] FAILED at line $LINENO: $BASH_COMMAND" >&2' ERR
+
 echo "[chroot] Syncing Portage tree..."
-emerge-webrsync -q
+emerge-webrsync -q || { echo "[chroot] emerge-webrsync failed, retrying with emerge --sync..."; emerge --sync -q; }
 
 echo "[chroot] Selecting profile..."
 if [[ "${LIBC}" == "musl" ]]; then
@@ -887,7 +889,7 @@ fi
 
 echo "[chroot] Setting timezone..."
 # Case-insensitive match against actual zoneinfo files
-_tz_match=$(find /usr/share/zoneinfo -type f | sed 's|/usr/share/zoneinfo/||' | grep -ix "${TIMEZONE}" | head -1)
+_tz_match=$(find /usr/share/zoneinfo -type f | sed 's|/usr/share/zoneinfo/||' | grep -ix "${TIMEZONE}" | head -1 || true)
 if [[ -n "$_tz_match" ]]; then TIMEZONE="$_tz_match"; fi
 echo "${TIMEZONE}" > /etc/timezone
 emerge --config sys-libs/timezone-data
