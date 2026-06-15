@@ -480,13 +480,13 @@ Are you sure you want to use dinit?" 10 58
     d --title "Desktop Environment / WM" \
       --menu "Choose a desktop, window manager, or compositor:" 28 76 16 \
         "none"     "Bare system — no GUI" \
-        "kde"      "KDE Plasma (Xorg)" \
-        "gnome"    "GNOME (Xorg)" \
-        "xfce"     "XFCE (Xorg)" \
-        "i3"       "Tiling WM — keyboard-driven (Xorg)" \
-        "openbox"  "Floating WM — highly configurable (Xorg)" \
-        "bspwm"    "Binary space partitioning tiling WM (Xorg)" \
-        "dwm"      "Suckless tiling WM — requires manual patching (Xorg)" \
+        "kde"      "KDE Plasma (X11)" \
+        "gnome"    "GNOME (X11)" \
+        "xfce"     "XFCE (X11)" \
+        "i3"       "Tiling WM — keyboard-driven (X11)" \
+        "openbox"  "Floating WM — highly configurable (X11)" \
+        "bspwm"    "Binary space partitioning tiling WM (X11)" \
+        "dwm"      "Suckless tiling WM — requires manual patching (X11)" \
         "sway"     "i3-compatible Wayland compositor — stable" \
         "hyprland" "Dynamic tiling Wayland — highly customizable" \
         "niri"     "Scrollable tiling Wayland compositor" \
@@ -505,6 +505,25 @@ almost certainly want to customize it post-install.
 
 Are you sure you want dwm?" 10 56
         dialog_ok || exit 0
+    fi
+
+    # ── Display server ──
+    XSERVER=""
+    if [[ "$DESKTOP" =~ ^(kde|gnome|xfce|i3|openbox|bspwm|dwm)$ ]]; then
+        d --title "X11 Server" --menu "Choose an X11 display server:" 12 70 3 \
+            "xorg"    "Xorg — standard, well-tested (recommended)" \
+            "xlibre"  "XLibre — community Xorg fork, more active development" \
+            "none"    "Skip — I will install it manually"
+        XSERVER=$(result)
+        [[ -z "$XSERVER" ]] && XSERVER="xorg"
+    elif [[ "$DESKTOP" == "none" ]]; then
+        d --title "Display Protocol" --menu "Install a display server/protocol?" 14 70 4 \
+            "none"    "No display server — stay headless" \
+            "xorg"    "Xorg — X11 display server" \
+            "xlibre"  "XLibre — community Xorg fork" \
+            "wayland" "Wayland libs only — no compositor"
+        XSERVER=$(result)
+        [[ -z "$XSERVER" ]] && XSERVER="none"
     fi
 
     # ── Audio ──
@@ -628,6 +647,7 @@ Requires genkernel (forced on)." 12 62
   Filesystem:  $FS_TYPE
   Init system: $INIT_SYSTEM
   Desktop:     $DESKTOP
+  X Server:    ${XSERVER:-n/a}
   Audio:       ${AUDIO:-none}
   Greeter:     ${GREETER:-n/a}
   Kernel:      $KERNEL_METHOD
@@ -1365,6 +1385,30 @@ LIMCFG
         ;;
 esac
 
+# Install / swap X11 server if requested
+case "${XSERVER}" in
+    xorg)
+        echo "[chroot] Installing Xorg..."
+        emerge -q x11-base/xorg-server x11-base/xorg-drivers
+        ;;
+    xlibre)
+        echo "[chroot] Installing XLibre (community Xorg fork)..."
+        emerge -q app-eselect/eselect-repository dev-vcs/git
+        eselect repository enable xlibre
+        emaint sync -r xlibre
+        echo "*/*::xlibre ~amd64" > /etc/portage/package.accept_keywords/xlibre
+        # Fetch first, remove xorg-server if present, then install xlibre
+        emerge -f x11-base/xlibre-server
+        emerge -C x11-base/xorg-server x11-base/xorg-drivers 2>/dev/null || true
+        emerge -q x11-base/xlibre-server
+        emerge -q @x11-module-rebuild @preserved-rebuild 2>/dev/null || true
+        ;;
+    wayland)
+        echo "[chroot] Installing Wayland libraries..."
+        emerge -q dev-libs/wayland dev-libs/wayland-protocols
+        ;;
+esac
+
 if [[ -n "${desktop_pkgs}" ]]; then
     echo "[chroot] Installing desktop environment (this will take a while)..."
 
@@ -1503,6 +1547,7 @@ CHROOT_SCRIPT
         BOOTLOADER="${BOOTLOADER:-grub}" \
         USERNAME="${USERNAME:-user}" \
         USER_PASSWORD="${USER_PASSWORD:-}" \
+        XSERVER="${XSERVER:-}" \
         chroot "$MOUNT_ROOT" /bin/bash /setup-chroot.sh
 
     rm -f "$MOUNT_ROOT/setup-chroot.sh"
@@ -1528,6 +1573,7 @@ main() {
     RAIJU_COMPOSITOR=""
     USERNAME=""
     USER_PASSWORD=""
+    XSERVER=""
     collect_config
 
     clear
