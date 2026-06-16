@@ -978,13 +978,13 @@ phase_chroot() {
     local WAYLAND_BASE="sys-auth/seatd x11-terms/alacritty gui-apps/waybar gui-apps/wofi"
     local desktop_pkgs=""
     case "$DESKTOP" in
-        kde)      desktop_pkgs="kde-plasma/plasma-meta kde-apps/kde-apps-meta x11-base/xorg-server" ;;
-        gnome)    desktop_pkgs="gnome-base/gnome x11-base/xorg-server" ;;
-        xfce)     desktop_pkgs="xfce-base/xfce4-meta x11-base/xorg-server" ;;
-        i3)       desktop_pkgs="x11-wm/i3 x11-misc/i3status x11-misc/dmenu x11-terms/alacritty x11-base/xorg-server" ;;
-        openbox)  desktop_pkgs="x11-wm/openbox x11-misc/tint2 x11-misc/dmenu x11-terms/alacritty x11-base/xorg-server" ;;
-        bspwm)    desktop_pkgs="x11-wm/bspwm x11-misc/sxhkd x11-misc/dmenu x11-terms/alacritty x11-base/xorg-server" ;;
-        dwm)      desktop_pkgs="x11-wm/dwm x11-terms/st x11-base/xorg-server" ;;
+        kde)      desktop_pkgs="kde-plasma/plasma-meta kde-apps/kde-apps-meta" ;;
+        gnome)    desktop_pkgs="gnome-base/gnome" ;;
+        xfce)     desktop_pkgs="xfce-base/xfce4-meta" ;;
+        i3)       desktop_pkgs="x11-wm/i3 x11-misc/i3status x11-misc/dmenu x11-terms/alacritty" ;;
+        openbox)  desktop_pkgs="x11-wm/openbox x11-misc/tint2 x11-misc/dmenu x11-terms/alacritty" ;;
+        bspwm)    desktop_pkgs="x11-wm/bspwm x11-misc/sxhkd x11-misc/dmenu x11-terms/alacritty" ;;
+        dwm)      desktop_pkgs="x11-wm/dwm x11-terms/st" ;;
         sway)     desktop_pkgs="gui-wm/sway $WAYLAND_BASE" ;;
         hyprland) desktop_pkgs="gui-wm/hyprland gui-apps/hyprpaper $WAYLAND_BASE" ;;
         niri)     desktop_pkgs="gui-wm/niri $WAYLAND_BASE" ;;
@@ -1433,7 +1433,7 @@ if [[ -n "${desktop_pkgs}" ]]; then
     if [[ "${DESKTOP}" == "mangowm" || "${RAIJU_MODE}" == "1" ]]; then
         emerge -q app-eselect/eselect-repository dev-vcs/git
         eselect repository enable guru
-        emerge --sync guru
+        emaint sync -r guru
     fi
 
     emerge -q ${desktop_pkgs} ${dm_pkg}
@@ -1520,6 +1520,7 @@ if [[ "${INIT_SYSTEM}" == "s6" ]]; then
     echo "[chroot] Compiling s6-rc service database..."
     # Source dir is adminsv; compiled db replaces the existing one atomically
     if command -v s6-rc-compile &>/dev/null; then
+        mkdir -p /etc/s6/rc
         s6-rc-compile /etc/s6/rc/compiled.new /etc/s6/adminsv && \
             mv /etc/s6/rc/compiled.new /etc/s6/rc/compiled || \
             echo "[warn] s6-rc-compile failed — service activation may need manual repair post-boot"
@@ -1612,7 +1613,7 @@ main() {
     fi
 
     d --title "Done!" --yesno "${msg}\n\nReboot now?" 16 58
-    dialog_ok && reboot
+    if dialog_ok; then reboot; fi
 }
 
 main "$@"
