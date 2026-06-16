@@ -1160,6 +1160,10 @@ echo "[chroot] Setting hostname..."
 echo "${HOSTNAME}" > /etc/hostname
 
 echo "[chroot] Configuring network (NetworkManager)..."
+mkdir -p /etc/portage/package.use
+cat >> /etc/portage/package.use/networkmanager <<'EOF'
+net-misc/networkmanager -bluetooth -consolekit -modemmanager -ofono -ppp -teamd -wext wifi
+EOF
 emerge -q net-misc/networkmanager
 
 case "${INIT_SYSTEM}" in
