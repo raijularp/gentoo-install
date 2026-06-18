@@ -1,0 +1,742 @@
+#!/usr/bin/env bash
+# Artix Installation Script (Raiju Preset) — vibecoded by Claude Code
+# Run as root from the Artix base ISO (dinit variant recommended)
+
+set -euo pipefail
+
+MOUNT_ROOT="/mnt"
+BACKTITLE="Artix Installer  |  Raiju Preset  |  vibecoded by Claude Code"
+TMP=$(mktemp)
+trap 'rm -f "$TMP"' EXIT
+
+# ─── Sanity checks ────────────────────────────────────────────────────────────
+if [[ $EUID -ne 0 ]]; then echo "Run as root."; exit 1; fi
+command -v dialog    &>/dev/null || pacman -Sy --noconfirm dialog
+command -v parted    &>/dev/null || { echo "parted is required."; exit 1; }
+command -v basestrap &>/dev/null || { echo "basestrap is required — boot from an Artix ISO."; exit 1; }
+
+# ─── TUI helpers ──────────────────────────────────────────────────────────────
+_DIALOG_EXIT=0
+d()        { _DIALOG_EXIT=0; dialog --backtitle "$BACKTITLE" "$@" 2>"$TMP" || _DIALOG_EXIT=$?; }
+result()   { cat "$TMP"; }
+dialog_ok(){ [[ $_DIALOG_EXIT -eq 0 ]]; }
+die()      { dialog --backtitle "$BACKTITLE" --title "Fatal Error" --msgbox "$*" 8 60; exit 1; }
+info_box() { dialog --backtitle "$BACKTITLE" --title "Installing..." --infobox "$*" 5 60; }
+
+# ─── Timezone picker ──────────────────────────────────────────────────────────
+pick_timezone() {
+    local zoneroot="/usr/share/zoneinfo"
+    local region_args=()
+    while IFS= read -r r; do
+        region_args+=("$r" "")
+    done < <(ls "$zoneroot" | grep -E '^[A-Z]' | grep -v '^posix$' | grep -v '^right$' | sort)
+
+    d --title "Timezone — Region" --menu "Select your region:" 24 50 16 "${region_args[@]}"
+    local region; region=$(result)
+    if [[ -z "$region" ]]; then TIMEZONE="UTC"; return; fi
+
+    if [[ -d "$zoneroot/$region" ]]; then
+        local city_args=()
+        while IFS= read -r c; do
+            city_args+=("$c" "")
+        done < <(find "$zoneroot/$region" -type f | sed "s|$zoneroot/$region/||" | sort)
+
+        d --title "Timezone — $region" --menu "Select your city:" 24 56 16 "${city_args[@]}"
+        local city; city=$(result)
+        if [[ -z "$city" ]]; then TIMEZONE="UTC"; return; fi
+        TIMEZONE="$region/$city"
+    else
+        TIMEZONE="$region"
+    fi
+}
+
+# ─── Config collection ────────────────────────────────────────────────────────
+collect_config() {
+    d --title "Artix Installer — Raiju Preset" --msgbox \
+"Artix Linux Installer — Raiju Preset
+
+Preset (fixed):
+  Init:        dinit
+  Filesystem:  btrfs  (@  @home  @snapshots  @var_log)
+  Shell:       Noctalia Shell
+  Audio:       PipeWire + WirePlumber (user service via turnstile)
+  Greeter:     ly
+  Bootloader:  GRUB (UEFI)
+  AUR helper:  yay
+
+Installed apps:
+  neovim (vim alias)  firefox  vesktop  steam
+  ripgrep  fd  git  lazygit  nodejs  alacritty
+  Iosevka Nerd Font  JetBrainsMono Nerd Font
+
+You choose: disk, compositor, timezone, hostname, username, passwords." 26 62
+
+    # ── Disk ──
+    local disk_args=()
+    while IFS= read -r line; do
+        local name size model
+        name=$(awk '{print $1}' <<< "$line")
+        size=$(awk '{print $2}' <<< "$line")
+        model=$(awk '{$1=$2=""; print $0}' <<< "$line" | xargs)
+        disk_args+=("/dev/$name" "$size  $model")
+    done < <(lsblk -d -o NAME,SIZE,MODEL --noheadings | grep -v loop)
+    [[ ${#disk_args[@]} -eq 0 ]] && die "No block devices found."
+
+    d --title "Target Disk" \
+      --menu "Select the disk to install Artix on.\nWARNING: it will be completely wiped." \
+      18 70 8 "${disk_args[@]}"
+    DISK=$(result)
+    [[ -b "$DISK" ]] || die "No disk selected."
+
+    d --title "Confirm Wipe" --yesno \
+"ALL DATA on $DISK will be permanently destroyed.\n\nAre you sure?" 8 55
+    dialog_ok || exit 0
+
+    # ── Compositor ──
+    d --title "Compositor" --menu "Choose your Wayland compositor:" 10 60 2 \
+        "niri"    "niri — scrollable tiling (recommended)" \
+        "mangowm" "mangowm — minimalist dwl-based (AUR)"
+    COMPOSITOR=$(result)
+    [[ -z "$COMPOSITOR" ]] && COMPOSITOR="niri"
+
+    # ── Timezone ──
+    pick_timezone
+
+    # ── Hostname ──
+    d --title "Hostname" --inputbox "Enter hostname:" 8 50 "raiju"
+    HOSTNAME=$(result); [[ -n "$HOSTNAME" ]] || HOSTNAME="raiju"
+
+    # ── Username ──
+    d --title "Username" --inputbox "Enter username:" 8 50 "raiju"
+    USERNAME=$(result); [[ -n "$USERNAME" ]] || USERNAME="raiju"
+
+    # ── Root password ──
+    local rpw1 rpw2
+    d --title "Root Password" --passwordbox "Enter root password:" 8 50; rpw1=$(result)
+    d --title "Root Password" --passwordbox "Confirm root password:" 8 50; rpw2=$(result)
+    [[ "$rpw1" == "$rpw2" ]] || die "Root passwords do not match."
+    [[ -n "$rpw1" ]]          || die "Root password cannot be empty."
+    ROOT_PASSWORD="$rpw1"
+
+    # ── User password ──
+    local upw1 upw2
+    d --title "User Password" --passwordbox "Enter password for $USERNAME:" 8 50; upw1=$(result)
+    d --title "User Password" --passwordbox "Confirm password for $USERNAME:" 8 50; upw2=$(result)
+    [[ "$upw1" == "$upw2" ]] || die "User passwords do not match."
+    [[ -n "$upw1" ]]          || die "User password cannot be empty."
+    USER_PASSWORD="$upw1"
+
+    # ── Summary ──
+    d --title "Confirm Installation" --yesno \
+"Artix Raiju Preset — Summary
+──────────────────────────────────────
+  Disk:        $DISK
+  Compositor:  $COMPOSITOR + Noctalia Shell
+  Audio:       PipeWire (user service via turnstile)
+  Init:        dinit
+  Filesystem:  btrfs
+  Bootloader:  GRUB (UEFI)
+  Timezone:    $TIMEZONE
+  Hostname:    $HOSTNAME
+  Username:    $USERNAME
+──────────────────────────────────────
+  ALL DATA ON $DISK WILL BE DESTROYED.
+
+Proceed with installation?" 24 52
+    dialog_ok || exit 0
+}
+
+# ─── Phase 0: WiFi ────────────────────────────────────────────────────────────
+phase_wifi() {
+    if curl -s --max-time 5 https://artixlinux.org >/dev/null 2>&1; then
+        return 0
+    fi
+
+    d --title "Network" --yesno \
+"No internet connection detected.
+
+Do you want to connect to a WiFi network?" 8 52
+    dialog_ok || return 0
+
+    local iface_list=()
+    while IFS= read -r i; do
+        iface_list+=("$i" "")
+    done < <(iw dev 2>/dev/null | awk '/Interface/{print $2}' || true)
+
+    if [[ ${#iface_list[@]} -eq 0 ]]; then
+        d --title "WiFi" --msgbox "No wireless interface found.\nConnect via ethernet and re-run." 8 56
+        return 0
+    fi
+
+    local iface
+    if [[ ${#iface_list[@]} -eq 2 ]]; then
+        iface="${iface_list[0]}"
+    else
+        d --title "WiFi — Interface" --menu "Select your wireless interface:" 12 50 6 "${iface_list[@]}"
+        iface=$(result)
+    fi
+    [[ -z "$iface" ]] && return 0
+
+    info_box "Scanning for WiFi networks on $iface..."
+    ip link set "$iface" up 2>/dev/null || true
+    local scan_out
+    scan_out=$(iw dev "$iface" scan 2>/dev/null | grep 'SSID:' | sed 's/.*SSID: //' | grep -v '^$' | sort -u || true)
+
+    local ssid=""
+    if [[ -n "$scan_out" ]]; then
+        local ssid_args=()
+        while IFS= read -r s; do
+            ssid_args+=("$s" "")
+        done <<< "$scan_out"
+        ssid_args+=("__manual__" "Enter SSID manually")
+        d --title "WiFi — Select Network" --menu "Choose a network:" 20 60 12 "${ssid_args[@]}"
+        ssid=$(result)
+    fi
+
+    if [[ -z "$ssid" || "$ssid" == "__manual__" ]]; then
+        d --title "WiFi — SSID" --inputbox "Enter WiFi network name (SSID):" 8 54 ""
+        ssid=$(result)
+    fi
+    [[ -z "$ssid" ]] && return 0
+
+    d --title "WiFi — Password" --passwordbox "Enter password for \"$ssid\":" 8 54
+    local psk; psk=$(result)
+
+    info_box "Connecting to $ssid..."
+    local wpa_conf; wpa_conf=$(mktemp)
+    wpa_passphrase "$ssid" "$psk" > "$wpa_conf"
+    pkill wpa_supplicant 2>/dev/null || true
+    sleep 1
+    wpa_supplicant -B -i "$iface" -c "$wpa_conf" -P /tmp/wpa.pid >/dev/null 2>&1
+    rm -f "$wpa_conf"
+    dhcpcd "$iface" -t 15 -q 2>/dev/null || dhclient "$iface" 2>/dev/null || true
+
+    if curl -s --max-time 10 https://artixlinux.org >/dev/null 2>&1; then
+        d --title "WiFi" --msgbox "Connected to $ssid successfully." 6 48
+    else
+        d --title "WiFi" --msgbox "Could not verify connection.\nProceeding anyway." 8 52
+    fi
+}
+
+# ─── Phase 1: Disk ────────────────────────────────────────────────────────────
+phase_disk() {
+    info_box "Unmounting any existing mounts on $DISK..."
+    swapoff -a 2>/dev/null || true
+    umount -R "$MOUNT_ROOT" 2>/dev/null || true
+    for part in $(lsblk -lno NAME "$DISK" | tail -n +2); do
+        umount -l "/dev/$part" 2>/dev/null || true
+    done
+
+    [[ "$DISK" =~ nvme ]] && PART_PREFIX="${DISK}p" || PART_PREFIX="${DISK}"
+
+    info_box "Partitioning $DISK (GPT — EFI + btrfs root)..."
+    parted -s "$DISK" \
+        mklabel gpt \
+        mkpart ESP fat32 1MiB 513MiB \
+        set 1 esp on \
+        mkpart root btrfs 513MiB 100%
+
+    PART_EFI="${PART_PREFIX}1"
+    PART_ROOT="${PART_PREFIX}2"
+
+    info_box "Formatting partitions..."
+    mkfs.fat -F32 -n EFI "$PART_EFI"
+    mkfs.btrfs -f -L artix "$PART_ROOT"
+
+    info_box "Creating btrfs subvolumes..."
+    mount "$PART_ROOT" "$MOUNT_ROOT"
+    btrfs subvolume create "$MOUNT_ROOT/@"
+    btrfs subvolume create "$MOUNT_ROOT/@home"
+    btrfs subvolume create "$MOUNT_ROOT/@snapshots"
+    btrfs subvolume create "$MOUNT_ROOT/@var_log"
+    umount "$MOUNT_ROOT"
+
+    local btrfs_opts="noatime,compress=zstd:1,space_cache=v2"
+    info_box "Mounting btrfs subvolumes..."
+    mount -o "${btrfs_opts},subvol=@"          "$PART_ROOT" "$MOUNT_ROOT"
+    mkdir -p "$MOUNT_ROOT"/{home,.snapshots,var/log,boot/efi}
+    mount -o "${btrfs_opts},subvol=@home"      "$PART_ROOT" "$MOUNT_ROOT/home"
+    mount -o "${btrfs_opts},subvol=@snapshots" "$PART_ROOT" "$MOUNT_ROOT/.snapshots"
+    mount -o "${btrfs_opts},subvol=@var_log"   "$PART_ROOT" "$MOUNT_ROOT/var/log"
+    mount "$PART_EFI" "$MOUNT_ROOT/boot/efi"
+}
+
+# ─── Phase 2: Basestrap ───────────────────────────────────────────────────────
+phase_basestrap() {
+    info_box "Installing base system with basestrap...\n(this may take several minutes)"
+
+    basestrap "$MOUNT_ROOT" \
+        base base-devel \
+        dinit elogind-dinit \
+        linux linux-headers linux-firmware \
+        btrfs-progs \
+        grub efibootmgr os-prober \
+        networkmanager networkmanager-dinit \
+        dbus dbus-dinit \
+        seatd seatd-dinit \
+        turnstile turnstile-dinit \
+        pipewire wireplumber pipewire-alsa pipewire-jack pipewire-pulse \
+        ly ly-dinit \
+        git curl wget \
+        neovim \
+        ripgrep fd nodejs python \
+        noto-fonts noto-fonts-emoji \
+        sudo man-db man-pages \
+        htop \
+        bash-completion zsh fish \
+        dialog wpa_supplicant dhcpcd \
+        brightnessctl \
+        grim slurp wl-clipboard \
+        xdg-desktop-portal xdg-user-dirs \
+        alacritty
+
+    if [[ "$COMPOSITOR" == "niri" ]]; then
+        basestrap "$MOUNT_ROOT" niri xdg-desktop-portal-gtk
+    fi
+
+    info_box "Generating fstab..."
+    fstabgen -U "$MOUNT_ROOT" >> "$MOUNT_ROOT/etc/fstab"
+}
+
+# ─── Phase 3: Dotfiles ────────────────────────────────────────────────────────
+phase_dotfiles() {
+    local home="$MOUNT_ROOT/home/$USERNAME"
+    mkdir -p "$home"
+
+    if [[ "$COMPOSITOR" == "niri" ]]; then
+        mkdir -p "$home/.config/niri"
+        cat > "$home/.config/niri/config.kdl" <<'NIRI'
+// Raiju — niri config (generated by artix-install)
+
+input {
+    keyboard { xkb { layout "us" } }
+    touchpad { tap; natural-scroll; }
+    mouse { natural-scroll false; }
+}
+
+output "eDP-1" { scale 1.0; }
+
+layout {
+    gaps 8
+    center-focused-column "never"
+    preset-column-widths {
+        proportion 0.33333
+        proportion 0.5
+        proportion 0.66667
+    }
+    default-column-width { proportion 0.5; }
+    focus-ring { off; }
+    border { width 2; active-color "#cba6f7"; inactive-color "#313244"; }
+}
+
+window-rule {
+    geometry-corner-radius 12
+    clip-to-geometry true
+}
+
+debug {
+    honor-xdg-activation-with-invalid-serial
+}
+
+spawn-at-startup "qs" "-c" "noctalia-shell"
+
+binds {
+    // ── Noctalia Shell IPC ──────────────────────────────────────────────────
+    Alt+P           { spawn "qs" "-c" "noctalia-shell" "ipc" "call" "launcher toggle"; }
+    Alt+S           { spawn "qs" "-c" "noctalia-shell" "ipc" "call" "controlCenter toggle"; }
+    Alt+Shift+S     { spawn "qs" "-c" "noctalia-shell" "ipc" "call" "settings toggle"; }
+    Alt+Shift+P     { spawn "qs" "-c" "noctalia-shell" "ipc" "call" "sessionMenu toggle"; }
+    Alt+N           { spawn "qs" "-c" "noctalia-shell" "ipc" "call" "notifications toggle"; }
+
+    // ── Apps ────────────────────────────────────────────────────────────────
+    Alt+Return      { spawn "alacritty"; }
+    Alt+B           { spawn "firefox"; }
+
+    // ── Window management ───────────────────────────────────────────────────
+    Alt+Q           { close-window; }
+    Alt+T           { toggle-window-floating; }
+    Alt+F           { maximize-column; }
+    Alt+Shift+F     { fullscreen-window; }
+    Alt+Shift+E     { quit; }
+
+    // ── Focus ───────────────────────────────────────────────────────────────
+    Alt+H           { focus-column-left; }
+    Alt+L           { focus-column-right; }
+    Alt+J           { focus-window-down; }
+    Alt+K           { focus-window-up; }
+
+    // ── Move ────────────────────────────────────────────────────────────────
+    Alt+Shift+H     { move-column-left; }
+    Alt+Shift+L     { move-column-right; }
+    Alt+Shift+J     { move-window-down; }
+    Alt+Shift+K     { move-window-up; }
+
+    // ── Workspaces ──────────────────────────────────────────────────────────
+    Alt+1 { focus-workspace 1; }
+    Alt+2 { focus-workspace 2; }
+    Alt+3 { focus-workspace 3; }
+    Alt+4 { focus-workspace 4; }
+    Alt+5 { focus-workspace 5; }
+    Alt+Shift+1 { move-column-to-workspace 1; }
+    Alt+Shift+2 { move-column-to-workspace 2; }
+    Alt+Shift+3 { move-column-to-workspace 3; }
+    Alt+Shift+4 { move-column-to-workspace 4; }
+    Alt+Shift+5 { move-column-to-workspace 5; }
+
+    // ── Screenshots ─────────────────────────────────────────────────────────
+    Print             { screenshot; }
+    Ctrl+Print        { screenshot-screen; }
+    Ctrl+Shift+Print  { screenshot-window; }
+
+    // ── Media / hardware keys ─────────────────────────────────────────────
+    XF86AudioRaiseVolume  allow-when-locked=true { spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "5%+"; }
+    XF86AudioLowerVolume  allow-when-locked=true { spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "5%-"; }
+    XF86AudioMute         allow-when-locked=true { spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SINK@" "toggle"; }
+    XF86MonBrightnessUp   { spawn "brightnessctl" "set" "+10%"; }
+    XF86MonBrightnessDown { spawn "brightnessctl" "set" "10%-"; }
+}
+NIRI
+
+    elif [[ "$COMPOSITOR" == "mangowm" ]]; then
+        mkdir -p "$home/.config/mango"
+        cat > "$home/.config/mango/config.conf" <<'MANGO'
+# Raiju — mango config (generated by artix-install)
+
+exec-once=qs -c noctalia-shell
+
+border_width=2
+active_border_color=0xcba6f7
+inactive_border_color=0x313244
+gaps_in=4
+gaps_out=8
+rounding=12
+
+kb_layout=us
+natural_scroll=false
+tap_to_click=true
+
+# ── Noctalia Shell IPC ──────────────────────────────────────────────────────
+bind=ALT,p,exec,qs -c noctalia-shell ipc call "launcher toggle"
+bind=ALT,s,exec,qs -c noctalia-shell ipc call "controlCenter toggle"
+bind=ALT SHIFT,s,exec,qs -c noctalia-shell ipc call "settings toggle"
+bind=ALT SHIFT,p,exec,qs -c noctalia-shell ipc call "sessionMenu toggle"
+bind=ALT,n,exec,qs -c noctalia-shell ipc call "notifications toggle"
+
+# ── Apps ────────────────────────────────────────────────────────────────────
+bind=ALT,Return,exec,alacritty
+bind=ALT,b,exec,firefox
+
+# ── Window management ────────────────────────────────────────────────────────
+bind=ALT,q,killactive
+bind=ALT,t,togglefloating
+bind=ALT,f,fullscreen
+bind=ALT SHIFT,e,exit
+
+# ── Focus ────────────────────────────────────────────────────────────────────
+bind=ALT,h,movefocus,l
+bind=ALT,l,movefocus,r
+bind=ALT,j,movefocus,d
+bind=ALT,k,movefocus,u
+
+# ── Move windows ─────────────────────────────────────────────────────────────
+bind=ALT SHIFT,h,movewindow,l
+bind=ALT SHIFT,l,movewindow,r
+bind=ALT SHIFT,j,movewindow,d
+bind=ALT SHIFT,k,movewindow,u
+
+# ── Workspaces ───────────────────────────────────────────────────────────────
+bind=ALT,1,workspace,1
+bind=ALT,2,workspace,2
+bind=ALT,3,workspace,3
+bind=ALT,4,workspace,4
+bind=ALT,5,workspace,5
+bind=ALT SHIFT,1,movetoworkspace,1
+bind=ALT SHIFT,2,movetoworkspace,2
+bind=ALT SHIFT,3,movetoworkspace,3
+bind=ALT SHIFT,4,movetoworkspace,4
+bind=ALT SHIFT,5,movetoworkspace,5
+
+# ── Media / hardware keys ────────────────────────────────────────────────────
+bind=,XF86AudioRaiseVolume,exec,wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+
+bind=,XF86AudioLowerVolume,exec,wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+bind=,XF86AudioMute,exec,wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+bind=,XF86MonBrightnessUp,exec,brightnessctl set +10%
+bind=,XF86MonBrightnessDown,exec,brightnessctl set 10%-
+
+# ── Screenshots ──────────────────────────────────────────────────────────────
+bind=,Print,exec,grim ~/screenshot-$(date +%s).png
+bind=ALT,Print,exec,grim -g "$(slurp)" ~/screenshot-$(date +%s).png
+MANGO
+    fi
+
+    # Wayland session entry for ly
+    local session_dir="$MOUNT_ROOT/usr/share/wayland-sessions"
+    mkdir -p "$session_dir"
+    if [[ "$COMPOSITOR" == "niri" ]]; then
+        cat > "$session_dir/niri.desktop" <<'DESK'
+[Desktop Entry]
+Name=niri
+Comment=Scrollable tiling Wayland compositor
+Exec=niri-session
+Type=Application
+DesktopNames=niri
+DESK
+    elif [[ "$COMPOSITOR" == "mangowm" ]]; then
+        cat > "$session_dir/mangowm.desktop" <<'DESK'
+[Desktop Entry]
+Name=mangowm
+Comment=Minimalist Wayland compositor
+Exec=mangowm
+Type=Application
+DesktopNames=mangowm
+DESK
+    fi
+
+    chown -R 1000:1000 "$home"
+}
+
+# ─── Phase 4: Chroot ──────────────────────────────────────────────────────────
+phase_chroot() {
+    cp --dereference /etc/resolv.conf "$MOUNT_ROOT/etc/"
+
+    cat > "$MOUNT_ROOT/setup-chroot.sh" <<'CHROOT_SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'echo "[chroot] FAILED at line $LINENO: $BASH_COMMAND" >&2' ERR
+
+# ── Locale / timezone / hostname ─────────────────────────────────────────────
+echo "[chroot] Setting timezone..."
+ln -sf "/usr/share/zoneinfo/${TIMEZONE}" /etc/localtime
+hwclock --systohc
+
+echo "[chroot] Setting locale..."
+sed -i 's/^#en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+locale-gen
+echo "LANG=en_US.UTF-8" > /etc/locale.conf
+
+echo "[chroot] Setting hostname..."
+echo "${HOSTNAME}" > /etc/hostname
+cat > /etc/hosts <<HOSTS
+127.0.0.1   localhost
+::1         localhost
+127.0.1.1   ${HOSTNAME}.localdomain ${HOSTNAME}
+HOSTS
+
+# ── Pacman repos ─────────────────────────────────────────────────────────────
+echo "[chroot] Adding world-gremlins + Arch repos to pacman..."
+cat >> /etc/pacman.conf <<'PACCONF'
+
+# Artix staging — needed for pipewire-dinit / wireplumber-dinit
+[world-gremlins]
+Include = /etc/pacman.d/mirrorlist
+
+# Arch Linux universe bridge (provides artix-archlinux-support pkg)
+[universe]
+Server = https://universe.artixlinux.org/$arch
+Server = https://mirror1.artixlinux.org/universe/$arch
+
+# Arch repos — firefox, steam, fonts, etc.
+[extra]
+Include = /etc/pacman.d/mirrorlist-arch
+
+[multilib]
+Include = /etc/pacman.d/mirrorlist-arch
+PACCONF
+
+# Generate an Arch mirrorlist (US HTTPS mirrors)
+curl -s "https://archlinux.org/mirrorlist/?country=US&protocol=https&use_mirror_status=on" \
+    | sed 's/^#Server/Server/' > /etc/pacman.d/mirrorlist-arch
+
+pacman -Sy --noconfirm artix-archlinux-support
+pacman-key --populate archlinux
+pacman -Sy --noconfirm
+
+# ── Extra packages from Arch/Artix repos ─────────────────────────────────────
+echo "[chroot] Installing extra packages..."
+pacman -S --noconfirm --needed \
+    firefox \
+    ttf-iosevka-nerd \
+    ttf-jetbrains-mono-nerd \
+    python-pynvim \
+    lazygit \
+    fastfetch \
+    btop \
+    cliphist
+
+echo "[chroot] Installing Steam..."
+pacman -S --noconfirm --needed steam \
+    || echo "[warn] Steam failed to install (likely missing lib32 GPU deps) — install manually post-boot: pacman -S steam"
+
+# pipewire-dinit and wireplumber-dinit (from world-gremlins)
+echo "[chroot] Installing PipeWire dinit service files..."
+pacman -S --noconfirm --needed pipewire-dinit wireplumber-dinit \
+    || echo "[warn] pipewire-dinit/wireplumber-dinit not found — PipeWire user services must be enabled manually post-boot"
+
+# ── GRUB ─────────────────────────────────────────────────────────────────────
+echo "[chroot] Installing GRUB (UEFI)..."
+grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Artix --recheck
+grub-mkconfig -o /boot/grub/grub.cfg
+
+# ── System dinit services ─────────────────────────────────────────────────────
+echo "[chroot] Enabling system dinit services..."
+mkdir -p /etc/dinit.d/boot.d
+for svc in dbus elogind NetworkManager seatd turnstiled ly; do
+    if [[ -f /etc/dinit.d/${svc} ]]; then
+        ln -sf /etc/dinit.d/${svc} /etc/dinit.d/boot.d/${svc}
+        echo "  enabled: ${svc}"
+    else
+        echo "  [warn] service file not found: ${svc}"
+    fi
+done
+
+# ── ly config ────────────────────────────────────────────────────────────────
+echo "[chroot] Configuring ly..."
+sed -i 's/^#\s*animate\s*=.*/animate = true/'             /etc/ly/config.ini 2>/dev/null || true
+sed -i 's|^#\s*waylandsessions\s*=.*|waylandsessions = /usr/share/wayland-sessions|' \
+    /etc/ly/config.ini 2>/dev/null || true
+
+# ── User account ─────────────────────────────────────────────────────────────
+echo "[chroot] Setting root password..."
+echo "root:${ROOT_PASSWORD}" | chpasswd
+
+echo "[chroot] Creating user ${USERNAME}..."
+useradd -m -G wheel,audio,video,input,seat -s /usr/bin/fish "${USERNAME}"
+echo "${USERNAME}:${USER_PASSWORD}" | chpasswd
+
+echo "[chroot] Configuring sudo..."
+sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
+
+# ── vim alias ────────────────────────────────────────────────────────────────
+echo "[chroot] Setting vim alias (system-wide)..."
+cat > /etc/profile.d/vim-alias.sh <<'VIMALIAS'
+alias vim='nvim'
+alias vi='nvim'
+VIMALIAS
+chmod 644 /etc/profile.d/vim-alias.sh
+# Also cover non-login interactive shells (terminal emulators)
+grep -qF "alias vim=" /etc/bash.bashrc || echo -e "\nalias vim='nvim'\nalias vi='nvim'" >> /etc/bash.bashrc
+# Fish shell — system-wide vim alias
+mkdir -p /etc/fish/conf.d
+cat > /etc/fish/conf.d/vim-alias.fish <<'FISHALIAS'
+alias vim='nvim'
+alias vi='nvim'
+FISHALIAS
+
+# ── PipeWire user services ────────────────────────────────────────────────────
+# turnstile starts a per-user dinit instance on login.
+# Pre-create the user's boot.d symlinks so pipewire+wireplumber
+# start automatically on first login.
+echo "[chroot] Setting up PipeWire user services..."
+USER_DINIT_DIR="/home/${USERNAME}/.config/dinit.d/boot.d"
+mkdir -p "$USER_DINIT_DIR"
+
+for svc in pipewire wireplumber; do
+    # pipewire-dinit installs user service files to /etc/dinit.d/user/
+    if [[ -f /etc/dinit.d/user/${svc} ]]; then
+        ln -sf /etc/dinit.d/user/${svc} "${USER_DINIT_DIR}/${svc}"
+        echo "  enabled user service: ${svc}"
+    else
+        echo "  [warn] /etc/dinit.d/user/${svc} not found — enable manually: dinitctl --user enable ${svc}"
+    fi
+done
+
+chown -R "${USERNAME}:${USERNAME}" "/home/${USERNAME}/.config/dinit.d"
+
+# wireplumber: disable logind monitor (Artix has no logind in user session)
+echo "[chroot] Configuring WirePlumber for logind-free setup..."
+WP_CONF_DIR="/home/${USERNAME}/.config/wireplumber/wireplumber.conf.d"
+mkdir -p "$WP_CONF_DIR"
+cat > "${WP_CONF_DIR}/80-disable-logind.conf" <<'WPCFG'
+wireplumber.profiles = {
+  main = {
+    monitor.bluez.seat-monitoring = disabled
+  }
+}
+WPCFG
+chown -R "${USERNAME}:${USERNAME}" "/home/${USERNAME}/.config/wireplumber"
+
+# ── yay (AUR helper) ─────────────────────────────────────────────────────────
+echo "[chroot] Installing yay (AUR helper)..."
+git clone https://aur.archlinux.org/yay-bin.git /tmp/yay-bin
+chown -R "${USERNAME}:${USERNAME}" /tmp/yay-bin
+su - "${USERNAME}" -c "cd /tmp/yay-bin && makepkg -si --noconfirm"
+rm -rf /tmp/yay-bin
+
+# ── AUR packages ─────────────────────────────────────────────────────────────
+echo "[chroot] Installing Vesktop (AUR)..."
+su - "${USERNAME}" -c "yay -S --noconfirm vesktop-bin" \
+    || echo "[warn] vesktop-bin failed — run post-boot: yay -S vesktop-bin"
+
+if [[ "${COMPOSITOR}" == "mangowm" ]]; then
+    echo "[chroot] Installing mangowm (AUR)..."
+    su - "${USERNAME}" -c "yay -S --noconfirm mangowm" \
+        || echo "[warn] mangowm AUR install failed — run post-boot: yay -S mangowm"
+fi
+
+echo "[chroot] Installing Noctalia Shell (AUR)..."
+su - "${USERNAME}" -c "yay -S --noconfirm noctalia-shell" \
+    || su - "${USERNAME}" -c "yay -S --noconfirm noctalia-shell-git" \
+    || echo "[warn] noctalia-shell not in AUR yet — install post-boot: yay -S noctalia-shell"
+
+# ── XDG dirs ─────────────────────────────────────────────────────────────────
+su - "${USERNAME}" -c "xdg-user-dirs-update" 2>/dev/null || true
+
+echo "[chroot] Done!"
+CHROOT_SCRIPT
+
+    chmod +x "$MOUNT_ROOT/setup-chroot.sh"
+    info_box "Entering chroot — this will take a while.\nDo not close this terminal."
+
+    artix-chroot "$MOUNT_ROOT" \
+        env \
+            TIMEZONE="$TIMEZONE" \
+            HOSTNAME="$HOSTNAME" \
+            USERNAME="$USERNAME" \
+            ROOT_PASSWORD="$ROOT_PASSWORD" \
+            USER_PASSWORD="$USER_PASSWORD" \
+            COMPOSITOR="$COMPOSITOR" \
+        /bin/bash /setup-chroot.sh
+
+    rm -f "$MOUNT_ROOT/setup-chroot.sh"
+}
+
+# ─── Phase 5: Cleanup ─────────────────────────────────────────────────────────
+phase_cleanup() {
+    info_box "Unmounting filesystems..."
+    umount -R "$MOUNT_ROOT" 2>/dev/null || true
+    swapoff -a 2>/dev/null || true
+}
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+main() {
+    collect_config
+    clear
+    echo "Starting Artix installation — this will take 20–60 minutes depending on your connection."
+    echo
+
+    phase_wifi
+    phase_disk
+    phase_basestrap
+    phase_dotfiles
+    phase_chroot
+    phase_cleanup
+
+    d --title "Done!" --yesno \
+"Installation complete!
+
+  Compositor:  $COMPOSITOR + Noctalia Shell
+  Init:        dinit
+  Audio:       PipeWire (user service via turnstile)
+  Greeter:     ly
+
+PipeWire starts automatically on login via turnstile.
+Run 'wpctl status' to verify audio is working.
+
+If noctalia-shell wasn't in the AUR during install:
+  yay -S noctalia-shell
+
+Reboot now?" 20 60
+    dialog_ok && reboot
+}
+
+main "$@"
