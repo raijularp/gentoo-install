@@ -60,7 +60,7 @@ Preset (fixed):
   Filesystem:  btrfs  (@  @home  @snapshots  @var_log)
   Shell:       Noctalia Shell
   Audio:       PipeWire + WirePlumber (user service via turnstile)
-  Greeter:     ly
+  Greeter:     sddm
   Bootloader:  GRUB (UEFI)
   AUR helper:  yay
 
@@ -276,7 +276,7 @@ phase_basestrap() {
         seatd seatd-dinit \
         turnstile turnstile-dinit \
         pipewire wireplumber pipewire-alsa pipewire-jack pipewire-pulse \
-        ly ly-dinit \
+        sddm sddm-dinit \
         git curl wget \
         neovim \
         ripgrep fd nodejs python \
@@ -580,7 +580,7 @@ grub-mkconfig -o /boot/grub/grub.cfg
 # ── System dinit services ─────────────────────────────────────────────────────
 echo "[chroot] Enabling system dinit services..."
 mkdir -p /etc/dinit.d/boot.d
-for svc in dbus elogind NetworkManager seatd turnstiled ly; do
+for svc in dbus elogind NetworkManager seatd turnstiled sddm; do
     if [[ -f /etc/dinit.d/${svc} ]]; then
         ln -sf /etc/dinit.d/${svc} /etc/dinit.d/boot.d/${svc}
         echo "  enabled: ${svc}"
@@ -588,12 +588,6 @@ for svc in dbus elogind NetworkManager seatd turnstiled ly; do
         echo "  [warn] service file not found: ${svc}"
     fi
 done
-
-# ── ly config ────────────────────────────────────────────────────────────────
-echo "[chroot] Configuring ly..."
-sed -i 's/^#\s*animate\s*=.*/animate = true/'             /etc/ly/config.ini 2>/dev/null || true
-sed -i 's|^#\s*waylandsessions\s*=.*|waylandsessions = /usr/share/wayland-sessions|' \
-    /etc/ly/config.ini 2>/dev/null || true
 
 # ── User account ─────────────────────────────────────────────────────────────
 echo "[chroot] Setting root password..."
@@ -727,7 +721,7 @@ main() {
   Compositor:  $COMPOSITOR + Noctalia Shell
   Init:        dinit
   Audio:       PipeWire (user service via turnstile)
-  Greeter:     ly
+  Greeter:     sddm
 
 PipeWire starts automatically on login via turnstile.
 Run 'wpctl status' to verify audio is working.
