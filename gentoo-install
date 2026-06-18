@@ -991,7 +991,7 @@ phase_chroot() {
         river)    desktop_pkgs="gui-wm/river $WAYLAND_BASE" ;;
         wayfire)  desktop_pkgs="gui-wm/wayfire gui-wm/wcm $WAYLAND_BASE" ;;
         labwc)    desktop_pkgs="gui-wm/labwc $WAYLAND_BASE" ;;
-        mangowm)  desktop_pkgs="gui-wm/mangowm gui-libs/scenefx gui-apps/grim gui-apps/slurp $WAYLAND_BASE" ;;
+        mangowm)  desktop_pkgs="gui-wm/mangowm gui-apps/grim gui-apps/slurp $WAYLAND_BASE" ;;
         weston)   desktop_pkgs="gui-libs/weston x11-terms/alacritty sys-auth/seatd" ;;
     esac
 
@@ -1434,21 +1434,29 @@ if [[ -n "${desktop_pkgs}" ]]; then
         emerge -q app-eselect/eselect-repository dev-vcs/git
         eselect repository enable guru
         emaint sync -r guru
+
+        # If mangowm is not actually in GURU yet, fall back to niri silently
+        if [[ "${DESKTOP}" == "mangowm" ]]; then
+            if ! emerge --pretend gui-wm/mangowm &>/dev/null 2>&1; then
+                echo "[warn] mangowm not found in GURU overlay — falling back to niri"
+                DESKTOP="niri"
+                desktop_pkgs="gui-wm/niri sys-auth/seatd x11-terms/alacritty gui-apps/waybar gui-apps/wofi"
+            fi
+        fi
     fi
 
     emerge -q ${desktop_pkgs} ${dm_pkg}
 
     if [[ "${RAIJU_MODE}" == "1" ]]; then
         echo "[chroot] Installing Noctalia Shell and dependencies..."
-        emerge -q gui-apps/noctalia-shell \
-            media-gfx/imagemagick \
-            sys-power/brightnessctl \
-            media-video/ffmpeg \
-            dev-qt/qt6-multimedia \
-            dev-python/setuptools \
-            gui-apps/wlr-randr \
-            gui-apps/cliphist \
-            gui-apps/wlsunset
+        # noctalia-shell may not be in GURU yet — install what we can, warn on failure
+        local _noctalia_deps="media-gfx/imagemagick sys-power/brightnessctl media-video/ffmpeg dev-python/setuptools gui-apps/wlr-randr gui-apps/cliphist gui-apps/wlsunset"
+        emerge -q ${_noctalia_deps} || echo "[warn] Some Noctalia deps failed — install manually post-boot."
+        if emerge --pretend gui-apps/noctalia-shell &>/dev/null 2>&1; then
+            emerge -q gui-apps/noctalia-shell || echo "[warn] noctalia-shell install failed — install manually post-boot."
+        else
+            echo "[warn] noctalia-shell not in GURU yet — install manually post-boot: emerge gui-apps/noctalia-shell"
+        fi
     fi
 
     if [[ -n "${dm_service}" ]]; then
