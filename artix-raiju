@@ -418,15 +418,15 @@ natural_scroll=false
 tap_to_click=true
 
 # ── Noctalia Shell IPC ──────────────────────────────────────────────────────
-bind=ALT,p,exec,qs -c noctalia-shell ipc call "launcher toggle"
-bind=ALT,s,exec,qs -c noctalia-shell ipc call "controlCenter toggle"
-bind=ALT+SHIFT,s,exec,qs -c noctalia-shell ipc call "settings toggle"
-bind=ALT+SHIFT,p,exec,qs -c noctalia-shell ipc call "sessionMenu toggle"
-bind=ALT,n,exec,qs -c noctalia-shell ipc call "notifications toggle"
+bind=ALT,p,spawn_shell,qs -c noctalia-shell ipc call "launcher toggle"
+bind=ALT,s,spawn_shell,qs -c noctalia-shell ipc call "controlCenter toggle"
+bind=ALT+SHIFT,s,spawn_shell,qs -c noctalia-shell ipc call "settings toggle"
+bind=ALT+SHIFT,p,spawn_shell,qs -c noctalia-shell ipc call "sessionMenu toggle"
+bind=ALT,n,spawn_shell,qs -c noctalia-shell ipc call "notifications toggle"
 
 # ── Apps ────────────────────────────────────────────────────────────────────
-bind=ALT,Return,exec,alacritty
-bind=ALT,b,exec,firefox
+bind=ALT,Return,spawn,alacritty
+bind=ALT,b,spawn,firefox
 
 # ── Window management ────────────────────────────────────────────────────────
 bind=ALT,q,killclient,
@@ -447,27 +447,27 @@ bind=ALT+SHIFT,j,exchange_client,down
 bind=ALT+SHIFT,k,exchange_client,up
 
 # ── Workspaces ───────────────────────────────────────────────────────────────
-bind=ALT,1,view,1
-bind=ALT,2,view,2
-bind=ALT,3,view,3
-bind=ALT,4,view,4
-bind=ALT,5,view,5
-bind=ALT+SHIFT,1,tag,1
-bind=ALT+SHIFT,2,tag,2
-bind=ALT+SHIFT,3,tag,3
-bind=ALT+SHIFT,4,tag,4
-bind=ALT+SHIFT,5,tag,5
+bind=ALT,1,view,1,0
+bind=ALT,2,view,2,0
+bind=ALT,3,view,3,0
+bind=ALT,4,view,4,0
+bind=ALT,5,view,5,0
+bind=ALT+SHIFT,1,tag,1,0
+bind=ALT+SHIFT,2,tag,2,0
+bind=ALT+SHIFT,3,tag,3,0
+bind=ALT+SHIFT,4,tag,4,0
+bind=ALT+SHIFT,5,tag,5,0
 
 # ── Media / hardware keys ────────────────────────────────────────────────────
-bind=NONE,XF86AudioRaiseVolume,exec,wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+
-bind=NONE,XF86AudioLowerVolume,exec,wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
-bind=NONE,XF86AudioMute,exec,wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
-bind=NONE,XF86MonBrightnessUp,exec,brightnessctl set +10%
-bind=NONE,XF86MonBrightnessDown,exec,brightnessctl set 10%-
+bind=NONE,XF86AudioRaiseVolume,spawn_shell,wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+
+bind=NONE,XF86AudioLowerVolume,spawn_shell,wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+bind=NONE,XF86AudioMute,spawn_shell,wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+bind=NONE,XF86MonBrightnessUp,spawn,brightnessctl set +10%
+bind=NONE,XF86MonBrightnessDown,spawn,brightnessctl set 10%-
 
 # ── Screenshots ──────────────────────────────────────────────────────────────
-bind=NONE,Print,exec,grim ~/screenshot-$(date +%s).png
-bind=ALT,Print,exec,grim -g "$(slurp)" ~/screenshot-$(date +%s).png
+bind=NONE,Print,spawn_shell,grim ~/screenshot-$(date +%s).png
+bind=ALT,Print,spawn_shell,grim -g "$(slurp)" ~/screenshot-$(date +%s).png
 MANGO
     fi
 
