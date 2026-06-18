@@ -418,8 +418,8 @@ tap_to_click=true
 # ── Noctalia Shell IPC ──────────────────────────────────────────────────────
 bind=ALT,p,exec,qs -c noctalia-shell ipc call "launcher toggle"
 bind=ALT,s,exec,qs -c noctalia-shell ipc call "controlCenter toggle"
-bind=ALT SHIFT,s,exec,qs -c noctalia-shell ipc call "settings toggle"
-bind=ALT SHIFT,p,exec,qs -c noctalia-shell ipc call "sessionMenu toggle"
+bind=ALT+SHIFT,s,exec,qs -c noctalia-shell ipc call "settings toggle"
+bind=ALT+SHIFT,p,exec,qs -c noctalia-shell ipc call "sessionMenu toggle"
 bind=ALT,n,exec,qs -c noctalia-shell ipc call "notifications toggle"
 
 # ── Apps ────────────────────────────────────────────────────────────────────
@@ -427,44 +427,44 @@ bind=ALT,Return,exec,alacritty
 bind=ALT,b,exec,firefox
 
 # ── Window management ────────────────────────────────────────────────────────
-bind=ALT,q,killactive
-bind=ALT,t,togglefloating
-bind=ALT,f,fullscreen
-bind=ALT SHIFT,e,exit
+bind=ALT,q,killclient,
+bind=ALT,t,togglefloating,
+bind=ALT,f,togglefullscreen,
+bind=ALT+SHIFT,e,quit,
 
 # ── Focus ────────────────────────────────────────────────────────────────────
-bind=ALT,h,movefocus,l
-bind=ALT,l,movefocus,r
-bind=ALT,j,movefocus,d
-bind=ALT,k,movefocus,u
+bind=ALT,h,focusdir,left
+bind=ALT,l,focusdir,right
+bind=ALT,j,focusdir,down
+bind=ALT,k,focusdir,up
 
 # ── Move windows ─────────────────────────────────────────────────────────────
-bind=ALT SHIFT,h,movewindow,l
-bind=ALT SHIFT,l,movewindow,r
-bind=ALT SHIFT,j,movewindow,d
-bind=ALT SHIFT,k,movewindow,u
+bind=ALT+SHIFT,h,exchange_client,left
+bind=ALT+SHIFT,l,exchange_client,right
+bind=ALT+SHIFT,j,exchange_client,down
+bind=ALT+SHIFT,k,exchange_client,up
 
 # ── Workspaces ───────────────────────────────────────────────────────────────
-bind=ALT,1,workspace,1
-bind=ALT,2,workspace,2
-bind=ALT,3,workspace,3
-bind=ALT,4,workspace,4
-bind=ALT,5,workspace,5
-bind=ALT SHIFT,1,movetoworkspace,1
-bind=ALT SHIFT,2,movetoworkspace,2
-bind=ALT SHIFT,3,movetoworkspace,3
-bind=ALT SHIFT,4,movetoworkspace,4
-bind=ALT SHIFT,5,movetoworkspace,5
+bind=ALT,1,view,1
+bind=ALT,2,view,2
+bind=ALT,3,view,3
+bind=ALT,4,view,4
+bind=ALT,5,view,5
+bind=ALT+SHIFT,1,tag,1
+bind=ALT+SHIFT,2,tag,2
+bind=ALT+SHIFT,3,tag,3
+bind=ALT+SHIFT,4,tag,4
+bind=ALT+SHIFT,5,tag,5
 
 # ── Media / hardware keys ────────────────────────────────────────────────────
-bind=,XF86AudioRaiseVolume,exec,wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+
-bind=,XF86AudioLowerVolume,exec,wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
-bind=,XF86AudioMute,exec,wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
-bind=,XF86MonBrightnessUp,exec,brightnessctl set +10%
-bind=,XF86MonBrightnessDown,exec,brightnessctl set 10%-
+bind=NONE,XF86AudioRaiseVolume,exec,wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+
+bind=NONE,XF86AudioLowerVolume,exec,wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+bind=NONE,XF86AudioMute,exec,wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+bind=NONE,XF86MonBrightnessUp,exec,brightnessctl set +10%
+bind=NONE,XF86MonBrightnessDown,exec,brightnessctl set 10%-
 
 # ── Screenshots ──────────────────────────────────────────────────────────────
-bind=,Print,exec,grim ~/screenshot-$(date +%s).png
+bind=NONE,Print,exec,grim ~/screenshot-$(date +%s).png
 bind=ALT,Print,exec,grim -g "$(slurp)" ~/screenshot-$(date +%s).png
 MANGO
     fi
